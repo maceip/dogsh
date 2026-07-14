@@ -1,0 +1,38 @@
+{
+  "fill": {
+    "solid": "srgb:0.961,0.945,0.902,1.0"
+  },
+  "fill-specializations": [
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "srgb:0.102,0.110,0.118,1.0"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "name": "collar",
+      "specular": true,
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "layers": [
+        {
+          "name": "collar",
+          "image-name": "collar-dark.png",
+          "image-name-specializations": [
+            {
+              "appearance": "dark",
+              "value": "collar-light.png"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}

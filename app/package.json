@@ -1,0 +1,29 @@
+{
+  "name": "dogsh-app",
+  "productName": "dogsh",
+  "version": "0.1.0",
+  "private": true,
+  "description": "dogsh native face + session daemon (Electron)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "smoke": "electron . --smoke",
+    "package": "electron-packager . dogsh --platform=darwin --out=build --overwrite --no-asar --icon=assets/dogsh.icns --icon=assets/dogsh.icon --ignore=\"^/build($|/)\" --ignore=\"^/\\.\"",
+    "rebuild": "electron-rebuild -f -w node-pty",
+    "postinstall": "electron-rebuild -f -w node-pty"
+  },
+  "dependencies": {
+    "@xterm/addon-serialize": "^0.13.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/addon-webgl": "^0.18.0",
+    "@xterm/headless": "^5.5.0",
+    "@xterm/xterm": "^5.5.0",
+    "node-pty": "^1.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.0.2",
+    "@electron/rebuild": "^3.6.0",
+    "electron": "^31.0.0"
+  }
+}

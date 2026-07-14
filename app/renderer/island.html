@@ -1,0 +1,203 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: transparent;
+    overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  #stage { position: relative; width: 100%; height: 100%; }
+
+  /* Positioning box: bottom-anchored WAVE(110px) above the window bottom so
+     the pill can grow upward without moving its resting edge off the dock.
+     (In wrapped mode the window is sized so this is also dead-center.) */
+  #pill {
+    position: absolute;
+    left: 50%;
+    bottom: 110px;
+    transform: translateX(-50%);
+    width: 44px;
+    height: 10px;
+    transition: width 0.18s ease, height 0.18s ease;
+    cursor: pointer;
+    z-index: 2;
+  }
+  /* Visual body (separate element so bark animations don't fight the
+     centering transform above). Matches OpenAI's island: a thin black slit
+     at rest — ours wears the yellow doghouse collar. */
+  #pillbody {
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    background: #0b0d10;
+    border: 2px solid #febc2e;
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    box-shadow: 0 3px 14px rgba(0, 0, 0, 0.45);
+  }
+  #pill.expanded #pillbody { border-width: 3px; }
+  #pill.wrapped #pillbody {
+    background: transparent;
+    border-width: 4px;
+    box-shadow: none;
+  }
+  #collar, #label {
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    pointer-events: none;
+  }
+  #pill.expanded #collar, #pill.expanded #label { opacity: 1; }
+  #pill.wrapped #collar, #pill.wrapped #label { opacity: 0; }
+  #collar { height: 16px; }
+  #label {
+    color: #e6edf3;
+    font: 600 10px -apple-system, BlinkMacSystemFont, sans-serif;
+    letter-spacing: 0.06em;
+  }
+
+  /* Bark: vibrate + rapid grow/shrink. */
+  @keyframes bark-shake {
+    0%   { transform: translateX(0)    scale(1); }
+    12%  { transform: translateX(-5px) scale(1.14); }
+    28%  { transform: translateX(5px)  scale(0.94); }
+    44%  { transform: translateX(-4px) scale(1.10); }
+    60%  { transform: translateX(4px)  scale(0.97); }
+    76%  { transform: translateX(-2px) scale(1.05); }
+    100% { transform: translateX(0)    scale(1); }
+  }
+  #pill.bark #pillbody { animation: bark-shake 480ms ease; }
+  @keyframes collar-pulse {
+    0% { transform: scale(1); }
+    20% { transform: scale(1.35); }
+    45% { transform: scale(0.85); }
+    70% { transform: scale(1.25); }
+    100% { transform: scale(1); }
+  }
+  #pill.bark #collar { animation: collar-pulse 480ms ease; }
+
+  /* Sound waves: rings expanding ~100px out from the pill edge. */
+  .wave {
+    position: absolute;
+    z-index: 1;
+    left: 50%;
+    border: 2.5px solid rgba(254, 188, 46, 0.85);
+    border-radius: 999px;
+    transform: translate(-50%, 50%);
+    pointer-events: none;
+    animation: wave-fade 620ms ease-out forwards;
+  }
+  @keyframes wave-fade {
+    from { opacity: 0.85; }
+    to   { opacity: 0; }
+  }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div id="pill" title="dogsh is in the doghouse — click to let it out">
+      <div id="pillbody">
+        <img id="collar" src="../assets/collar-light.png" alt="" />
+        <span id="label">dogsh</span>
+      </div>
+    </div>
+  </div>
+  <script>
+    const pill = document.getElementById('pill');
+    const stage = document.getElementById('stage');
+    // rest = thin slit (their island's idle state), exp = interaction size.
+    let sizes = { restW: 44, restH: 10, expW: 132, expH: 30 };
+    let wrapped = false;
+    let hovered = false;
+    let barking = false;
+    let settleTimer = null;
+
+    function apply() {
+      if (wrapped) return; // fixed size; classes set in onConfig
+      const grow = hovered || barking;
+      pill.classList.toggle('expanded', grow);
+      pill.style.width = (grow ? sizes.expW : sizes.restW) + 'px';
+      pill.style.height = (grow ? sizes.expH : sizes.restH) + 'px';
+    }
+
+    window.dogshIsland.onConfig((cfg) => {
+      wrapped = !!cfg.wrapped;
+      pill.classList.toggle('wrapped', wrapped);
+      if (wrapped) {
+        pill.classList.remove('expanded');
+        pill.style.width = cfg.pillW + 'px';
+        pill.style.height = cfg.pillH + 'px';
+      } else {
+        sizes = cfg;
+        // Announce arrival expanded (that's also the window-shrink target),
+        // then settle into the resting slit.
+        barking = true;
+        apply();
+        clearTimeout(settleTimer);
+        settleTimer = setTimeout(() => {
+          barking = false;
+          apply();
+        }, 900);
+      }
+    });
+
+    // Whole window is click-through except while hovering the pill.
+    pill.addEventListener('mouseenter', () => {
+      hovered = true;
+      window.dogshIsland.setIgnoreMouse(false);
+      apply();
+    });
+    pill.addEventListener('mouseleave', () => {
+      hovered = false;
+      window.dogshIsland.setIgnoreMouse(true);
+      apply();
+    });
+    pill.addEventListener('click', () => window.dogshIsland.exitDoghouse());
+
+    function spawnWave(delay) {
+      setTimeout(() => {
+        const w = pill.getBoundingClientRect().width;
+        const h = pill.getBoundingClientRect().height;
+        const bottom = 110 + h / 2; // ring center == pill center
+        const grow = 100; // "sound waves 100 pix out"
+        const ring = document.createElement('div');
+        ring.className = 'wave';
+        ring.style.bottom = bottom + 'px';
+        ring.animate(
+          [
+            { width: w + 'px', height: h + 'px' },
+            { width: w + grow * 2 + 'px', height: h + grow * 2 + 'px' },
+          ],
+          { duration: 620, easing: 'ease-out', fill: 'forwards' }
+        );
+        stage.appendChild(ring);
+        setTimeout(() => ring.remove(), 700);
+      }, delay);
+    }
+
+    window.dogshIsland.onBark(() => {
+      barking = true;
+      apply();
+      pill.classList.remove('bark');
+      void pill.offsetWidth; // restart the CSS animation
+      pill.classList.add('bark');
+      spawnWave(0);
+      spawnWave(110);
+      spawnWave(220);
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => {
+        barking = false;
+        pill.classList.remove('bark');
+        apply();
+      }, 900);
+    });
+  </script>
+</body>
+</html>

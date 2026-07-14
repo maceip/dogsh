@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "dogsh \u2014 terminal that follows you",
+  "version": "0.1.0",
+  "description": "Browser faces for the dogsh continuity terminal. Requires the local dogsh app running.",
+  "minimum_chrome_version": "116",
+  "permissions": ["offscreen", "storage", "scripting", "clipboardRead", "clipboardWrite"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": { "service_worker": "sw.js" },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": { "default_title": "dogsh" },
+  "commands": {
+    "toggle-overlay": {
+      "suggested_key": { "default": "Ctrl+Shift+Period" },
+      "description": "Toggle the dogsh terminal overlay on/off"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["fonts/*.ttf"],
+      "matches": ["http://*/*", "https://*/*"]
+    }
+  ]
+}

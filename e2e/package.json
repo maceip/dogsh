@@ -1,0 +1,13 @@
+{
+  "name": "dogsh-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Records the handoff illusion in Chromium with the extension loaded",
+  "scripts": {
+    "test": "node run.js"
+  },
+  "dependencies": {
+    "playwright": "^1.48.0",
+    "ws": "^8.18.0"
+  }
+}

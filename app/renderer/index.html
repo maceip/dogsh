@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>dogsh</title>
+    <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #0d1117;
+        overflow: hidden;
+        user-select: none;
+      }
+      #dragbar {
+        height: 34px;
+        -webkit-app-region: drag;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(#20262e, #171c22);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        color: #9aa4af;
+        font: 600 11px -apple-system, BlinkMacSystemFont, sans-serif;
+        letter-spacing: 0.04em;
+      }
+      #term {
+        padding: 8px 10px 10px 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="dragbar">dogsh</div>
+    <div id="term"></div>
+    <script src="../shared/config.js"></script>
+    <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
+    <script src="../node_modules/@xterm/addon-webgl/lib/addon-webgl.js"></script>
+    <script src="../node_modules/@xterm/addon-web-links/lib/addon-web-links.js"></script>
+    <script src="./renderer.js"></script>
+  </body>
+</html>
