@@ -14,6 +14,7 @@
         user-select: none;
       }
       #dragbar {
+        position: relative;
         height: 34px;
         -webkit-app-region: drag;
         display: flex;
@@ -25,13 +26,67 @@
         font: 600 11px -apple-system, BlinkMacSystemFont, sans-serif;
         letter-spacing: 0.04em;
       }
+      /* Session tabs — same strip as the browser overlay's; the daemon keeps
+         them in lockstep across every face. Buttons must opt out of the
+         drag region or clicks would move the window instead. */
+      #tabs {
+        position: absolute;
+        right: 10px;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        -webkit-app-region: no-drag;
+      }
+      .tab {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        height: 20px;
+        padding: 0 8px;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.06);
+        color: #9aa4af;
+        font: 600 10px -apple-system, BlinkMacSystemFont, sans-serif;
+        cursor: pointer;
+        max-width: 110px;
+      }
+      .tab[data-active] {
+        background: rgba(88, 166, 255, 0.22);
+        color: #dfe6ee;
+      }
+      .tab .label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .tab .x {
+        opacity: 0.55;
+        padding: 0 1px;
+      }
+      .tab .x:hover {
+        opacity: 1;
+      }
+      #newtab {
+        width: 18px;
+        height: 18px;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.06);
+        color: #9aa4af;
+        font: 600 13px/18px -apple-system, BlinkMacSystemFont, sans-serif;
+        text-align: center;
+        cursor: pointer;
+      }
+      #newtab:hover {
+        background: rgba(255, 255, 255, 0.12);
+        color: #dfe6ee;
+      }
       #term {
         padding: 8px 10px 10px 10px;
       }
     </style>
   </head>
   <body>
-    <div id="dragbar">dogsh</div>
+    <div id="dragbar">dogsh<div id="tabs"></div></div>
     <div id="term"></div>
     <script src="../shared/config.js"></script>
     <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>

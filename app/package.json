@@ -6,8 +6,12 @@
   "description": "dogsh native face + session daemon (Electron)",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
-    "smoke": "electron . --smoke",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "sim": "tsc && node daemon/sim.js",
+    "start": "tsc && electron .",
+    "daemon": "tsc && ELECTRON_RUN_AS_NODE=1 electron daemon/index.js",
+    "smoke": "tsc && ELECTRON_RUN_AS_NODE=1 electron daemon/index.js --smoke",
     "package": "electron-packager . dogsh --platform=darwin --out=build --overwrite --no-asar --icon=assets/dogsh.icns --icon=assets/dogsh.icon --ignore=\"^/build($|/)\" --ignore=\"^/\\.\"",
     "rebuild": "electron-rebuild -f -w node-pty",
     "postinstall": "electron-rebuild -f -w node-pty"
@@ -24,6 +28,9 @@
   "devDependencies": {
     "@electron/packager": "^20.0.2",
     "@electron/rebuild": "^3.6.0",
-    "electron": "^31.0.0"
+    "@types/node": "^26.1.1",
+    "@types/ws": "^8.18.1",
+    "electron": "^31.0.0",
+    "typescript": "^7.0.2"
   }
 }

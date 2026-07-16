@@ -6,10 +6,18 @@ const watch = process.argv.includes('--watch');
 const dist = path.join(__dirname, 'dist');
 fs.mkdirSync(dist, { recursive: true });
 
+// TypeScript sources: esbuild strips types natively (no tsc emit step in the
+// bundle path — `npm run typecheck` runs tsc --noEmit for the type errors).
+// Output names must stay content.js / sw.js / offscreen.js: the manifest and
+// offscreen.html reference them by name.
 const options = {
-  entryPoints: [path.join(__dirname, 'src', 'content.js')],
+  entryPoints: [
+    path.join(__dirname, 'src', 'content.ts'),
+    path.join(__dirname, 'src', 'sw.ts'),
+    path.join(__dirname, 'src', 'offscreen.ts'),
+  ],
   bundle: true,
-  outfile: path.join(dist, 'content.js'),
+  outdir: dist,
   format: 'iife',
   target: 'chrome116',
   loader: { '.css': 'text' },

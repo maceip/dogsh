@@ -1,17 +1,16 @@
 // Service worker: only job is to guarantee the offscreen document (the
 // WebSocket hub) exists. All terminal traffic flows content-script <-> port
 // <-> offscreen <-> daemon; none of it depends on this worker staying alive.
-async function ensureOffscreen() {
+async function ensureOffscreen(): Promise<void> {
   const contexts = await chrome.runtime.getContexts({
-    contextTypes: ['OFFSCREEN_DOCUMENT'],
+    contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
   });
   if (contexts.length > 0) return;
   try {
     await chrome.offscreen.createDocument({
       url: 'offscreen.html',
-      reasons: ['WORKERS'],
-      justification:
-        'Maintain WebSocket connections to the local dogsh terminal daemon',
+      reasons: [chrome.offscreen.Reason.WORKERS],
+      justification: 'Maintain WebSocket connections to the local dogsh terminal daemon',
     });
   } catch (e) {
     // Racing creation from two events is fine; "already exists" is success.
@@ -33,6 +32,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   try {
     const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
     for (const tab of tabs) {
+      if (tab.id == null) continue;
       chrome.scripting
         .executeScript({ target: { tabId: tab.id }, files: ['content.js'] })
         .catch(() => {
@@ -53,13 +53,44 @@ chrome.runtime.onStartup.addListener(ensureOffscreen);
 chrome.windows.onFocusChanged.addListener(async (windowId) => {
   const focused = windowId !== chrome.windows.WINDOW_ID_NONE;
   try {
-    const tabs = focused
-      ? await chrome.tabs.query({ active: true, windowId })
-      : await chrome.tabs.query({ active: true }); // Chrome lost focus: tell every active tab
+    // EVERY tab gets told, not just active ones: a background tab keeps a
+    // stale windowFocused otherwise and would report a wrong fact whenever
+    // its next real event fires. Content scripts fold this into their
+    // signal report; no report loops can come out of it (one push per real
+    // OS focus change).
+    const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
     for (const tab of tabs) {
       if (tab.id == null) continue;
+      const inFocusedWindow = focused && tab.windowId === windowId;
       chrome.tabs
-        .sendMessage(tab.id, { type: focused ? 'dogsh-window-focused' : 'dogsh-window-blurred' })
+        .sendMessage(tab.id, {
+          type: inFocusedWindow ? 'dogsh-window-focused' : 'dogsh-window-blurred',
+        })
+        .catch(() => {
+          /* tab has no content script (chrome:// etc.) */
+        });
+    }
+  } catch {
+    /* window closed mid-flight */
+  }
+});
+
+// A tab became its window's active tab (user click on the tab strip,
+// Ctrl+Tab, or programmatic activation). This is the browser's OWN
+// definition of a tab switch — stronger than the Page Visibility API, whose
+// in-renderer events don't always arrive (a screencast/capture session keeps
+// background pages composited, so visibilitychange never fires; the desktop
+// e2e's video recording hit exactly that). Same pattern as window focus
+// above: the authoritative signal originates here and every affected tab is
+// told, including the one that just LOST active status — it gets no renderer
+// event either.
+chrome.tabs.onActivated.addListener(async ({ tabId, windowId }) => {
+  try {
+    const tabs = await chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] });
+    for (const tab of tabs) {
+      if (tab.id == null || tab.windowId !== windowId) continue;
+      chrome.tabs
+        .sendMessage(tab.id, { type: 'dogsh-tab-active', active: tab.id === tabId })
         .catch(() => {
           /* tab has no content script (chrome:// etc.) */
         });
@@ -84,21 +115,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     ensureOffscreen().then(() => sendResponse({ ok: true }));
     return true; // async response
   }
-  // Ground truth for "is my Chrome window focused at the OS level".
-  // document.hasFocus() in the page LIES on macOS: app deactivation often
-  // delivers no blur to the renderer, so an occluded background tab still
-  // reports focused — which once created a WebGL context that composited
-  // black forever. Content scripts ask here instead.
+  // Ground truth for "is my Chrome window focused at the OS level" and "am I
+  // my window's active tab". document.hasFocus() in the page LIES on macOS
+  // (app deactivation often delivers no blur to the renderer), and the Page
+  // Visibility API LIES under any capture session (background tabs stay
+  // composited, so a hidden tab still reports 'visible'). Content scripts
+  // bootstrap both facts from here instead.
   if (msg && msg.type === 'query-window-focus') {
-    const windowId = sender.tab && sender.tab.windowId;
-    if (windowId == null) {
-      sendResponse({ focused: false });
+    const tab = sender.tab;
+    if (!tab || tab.windowId == null || tab.id == null) {
+      sendResponse({ focused: false, active: false });
       return;
     }
-    chrome.windows
-      .get(windowId)
-      .then((w) => sendResponse({ focused: !!w.focused }))
-      .catch(() => sendResponse({ focused: false }));
+    Promise.all([chrome.windows.get(tab.windowId), chrome.tabs.get(tab.id)])
+      .then(([w, t]) => sendResponse({ focused: !!w.focused, active: !!t.active }))
+      .catch(() => sendResponse({ focused: false, active: false }));
     return true; // async response
   }
 });

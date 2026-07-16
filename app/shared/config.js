@@ -4,7 +4,11 @@ const DOGSH_CONFIG = {
   // Bumped whenever the face<->daemon protocol or face UI changes materially.
   // The daemon warns (inside the terminal) any face that reports an older
   // version — catches "rebuilt dist/ but never reloaded the extension".
-  protocolVersion: 4,
+  // v6: level-based ownership. Clients report raw {visible,focused} signals
+  // (never claims); the daemon derives the owner and broadcasts owner-state;
+  // faces render themselves from it (reveal/hide commands are gone). Faces
+  // carry a durable faceKey so reconnects keep their ledger row.
+  protocolVersion: 6,
   // Handoff flight (native->tab fly-in, tab->native fly-out), milliseconds.
   flyMs: 280,
   // Interaction behavior shared by every face, so muscle memory transfers

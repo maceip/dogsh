@@ -6,3 +6,12 @@ dist/
 # generated outputs
 app/build/
 e2e/artifacts/
+
+# tsc emit (sources are the sibling .ts files; shared/config.js stays JS on
+# purpose — script-tag + require + esbuild consumers — and IS tracked)
+app/main.js
+app/preload.js
+app/preload-island.js
+app/daemon/*.js
+app/renderer/renderer.js
+tsconfig.tsbuildinfo

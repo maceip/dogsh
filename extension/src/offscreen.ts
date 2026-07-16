@@ -12,11 +12,11 @@ chrome.runtime.onConnect.addListener((port) => {
   if (!m) return;
   const daemonUrl = `ws://127.0.0.1:${Number(m[1]) || DEFAULT_PORT}`;
 
-  let ws = null;
+  let ws: WebSocket | null = null;
   let closedByPort = false;
-  let retryTimer = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-  function openSocket() {
+  function openSocket(): void {
     ws = new WebSocket(daemonUrl);
     ws.onopen = () => port.postMessage({ type: 'bridge-up' });
     ws.onmessage = (ev) => {
@@ -40,7 +40,7 @@ chrome.runtime.onConnect.addListener((port) => {
         if (!closedByPort) openSocket();
       }, 2000);
     };
-    ws.onerror = () => ws.close();
+    ws.onerror = () => ws?.close();
   }
 
   port.onMessage.addListener((msg) => {
@@ -50,7 +50,7 @@ chrome.runtime.onConnect.addListener((port) => {
   });
   port.onDisconnect.addListener(() => {
     closedByPort = true;
-    clearTimeout(retryTimer);
+    if (retryTimer) clearTimeout(retryTimer);
     if (ws) ws.close();
   });
 

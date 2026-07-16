@@ -14,7 +14,10 @@ it's simply already there. Switch back to the app and it comes home.
 
 ## How it works
 
-One process (`app/main.js`) is both the daemon and the native host:
+The session lives in a standalone daemon (`app/daemon/`, run as Node under the
+Electron binary); the Electron app (`app/main.ts`) is just the native host +
+face. Sources are TypeScript 7 — `tsc` emits the runtime `.js` next to each
+source (the extension bundles straight from `.ts` via esbuild):
 
 ```
                                      ┌── native face (Electron renderer, xterm.js WebGL)
@@ -27,10 +30,16 @@ real pty (zsh) ── headless xterm ────┤
   reveals. Nothing loads at transition time — that's what makes frames matter.
 - New faces get a pixel-exact snapshot (scrollback/colors/cursor/alt-screen)
   in one write via the xterm serialize addon, then join the live stream.
-- Handoffs are **focus claims**: a face saying "the user is looking at me."
-  The daemon (choreographer) turns claims into reveal/hide commands carrying
-  screen rects; the tab overlay converts screen→viewport coords and runs a
-  FLIP transform animation from the native window's last position.
+- Ownership is **derived, never claimed** (protocol v6): faces report raw
+  `{visible, focused}` signals from real events; the daemon's arbiter
+  (`app/daemon/arbiter.ts`) derives which face owns the terminal from that
+  ledger and broadcasts `owner-state`; every face renders itself from the
+  broadcast. Handoffs involving the native window run a FLIP transform
+  animation against the window's last screen rect (converted to viewport
+  coords in the overlay). The arbiter's contract is executable:
+  `cd app && npm run sim` (scripted replays of every historical arbitration
+  bug + seeded fuzz), and `node e2e/wire-probe.js` replays the same cases
+  against the real daemon over real sockets.
 - Extension internals: content scripts talk through a `chrome.runtime` port to
   an offscreen document that owns the WebSockets (immune to page CSP and
   service-worker idling). WebGL rendering is enabled only in the visible tab.
@@ -40,10 +49,10 @@ real pty (zsh) ── headless xterm ────┤
 Requires macOS, Node 20+, Xcode CLT (for node-pty), Chrome 116+.
 
 ```bash
-# 1. Native app + daemon
+# 1. Native app + daemon (npm start compiles the TypeScript first)
 cd app && npm install && npm start
 
-# 2. Extension (separate terminal)
+# 2. Extension (separate terminal; build = tsc --noEmit type-check + esbuild)
 cd extension && npm install && npm run build
 # then: chrome://extensions -> Developer mode -> Load unpacked -> extension/dist
 ```
@@ -62,9 +71,9 @@ cd extension && npm install && npm run build
 
 ```bash
 cd app
-npm run smoke          # pty roundtrip + mirror snapshot, output-gated
-npx electron . &       # then, in another shell:
-node test-handoff.js   # fake tab claims focus; verifies snapshot->reveal->hide sequencing
+npm run smoke          # compiles, then pty roundtrip + mirror snapshot, output-gated
+npm run sim            # ownership arbiter: scripted bug replays + seeded fuzz
+node ../e2e/wire-probe.js  # same contract against the real daemon over real sockets
 ```
 
 ## Known limitations (deliberate demo scope)
@@ -75,7 +84,9 @@ node test-handoff.js   # fake tab claims focus; verifies snapshot->reveal->hide 
   terminal stays wherever it was when you focus those.
 - The daemon accepts any localhost WebSocket client (no auth) — fine for a
   demo, not for shipping.
-- Session lives and dies with the app (no tmux persistence layer yet).
+- Sessions survive the app (they live in the daemon; `dogsh --install-daemon`
+  registers it with launchd), but not a daemon crash or reboot — no tmux-style
+  on-disk persistence.
 - Screen→viewport mapping approximates Chrome's toolbar height
   (`outerHeight - innerHeight`); devtools docked top/left will skew it.
 

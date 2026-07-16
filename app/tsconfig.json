@@ -1,0 +1,37 @@
+{
+  "compilerOptions": {
+    // Electron 31+ / Node 20+: ES2022 everywhere.
+    "target": "ES2022",
+    // CJS output — main, preloads, and the daemon all load via require()/
+    // plain script tags; package.json has no "type": "module" on purpose.
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    // renderer/renderer.ts is a SCRIPT (bare <script> tag, uses the
+    // DOGSH_CONFIG / Terminal UMD globals); TS 7 defaults moduleDetection to
+    // treating every .ts file as a module, which breaks that.
+    "moduleDetection": "auto",
+    "esModuleInterop": true,
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    // No outDir: emit NEXT TO the sources (tsc's default). Every runtime
+    // path (package.json "main", loadFile(), launchd plist ProgramArguments,
+    // spawn of daemon/index.js, the renderer <script> tags) predates
+    // TypeScript and must keep working unchanged. The emitted .js files are
+    // build artifacts (.gitignore'd).
+    "noEmitOnError": true
+  },
+  "include": [
+    "main.ts",
+    "preload.ts",
+    "preload-island.ts",
+    "daemon/**/*.ts",
+    "renderer/**/*.ts",
+    "shared/**/*.ts",
+    "types/**/*.d.ts"
+  ]
+}

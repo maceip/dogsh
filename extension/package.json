@@ -4,7 +4,8 @@
   "private": true,
   "description": "dogsh browser faces (MV3 extension)",
   "scripts": {
-    "build": "node build.js",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && node build.js",
     "watch": "node build.js --watch"
   },
   "dependencies": {
@@ -13,6 +14,8 @@
     "@xterm/xterm": "^5.5.0"
   },
   "devDependencies": {
-    "esbuild": "^0.23.0"
+    "@types/chrome": "^0.2.2",
+    "esbuild": "^0.23.0",
+    "typescript": "^7.0.2"
   }
 }
