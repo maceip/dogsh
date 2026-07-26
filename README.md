@@ -76,6 +76,11 @@ cd extension && npm run pack
 Point the phone extension options at `ws://localhost:<port>` with
 `adb reverse tcp:<port> tcp:<port>` when using USB/emulator loopback.
 
+## Site
+
+Project page (GitHub Pages): **https://maceip.github.io/dogsh/**  
+Source: [`docs/`](docs/) — demo video, architecture, how to use.
+
 ## CI
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on **macos-14** and:

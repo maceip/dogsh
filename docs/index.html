@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>dogsh — a terminal that follows you</title>
+    <meta
+      name="description"
+      content="dogsh is a continuity terminal: one real pty session across a native macOS app, Chrome tabs, and Edge Canary on Android."
+    />
+    <link rel="icon" href="dogsh.png" type="image/png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg0: #0c0d0f;
+        --bg1: #14161a;
+        --ink: #e8e4da;
+        --muted: #9a958a;
+        --line: rgba(232, 228, 218, 0.14);
+        --accent: #c4f042;
+        --accent-dim: rgba(196, 240, 66, 0.12);
+        --card: rgba(255, 255, 255, 0.03);
+        --max: 920px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--ink);
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+        font-size: 15px;
+        line-height: 1.55;
+        background:
+          radial-gradient(1200px 600px at 80% -10%, rgba(196, 240, 66, 0.08), transparent 55%),
+          radial-gradient(900px 500px at -10% 40%, rgba(90, 140, 255, 0.06), transparent 50%),
+          linear-gradient(180deg, var(--bg0), var(--bg1) 40%, #0a0b0d);
+        background-attachment: fixed;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.35;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
+        mix-blend-mode: overlay;
+        z-index: 0;
+      }
+
+      main {
+        position: relative;
+        z-index: 1;
+        max-width: var(--max);
+        margin: 0 auto;
+        padding: 48px 22px 96px;
+      }
+
+      .brand {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        gap: 18px;
+        margin-bottom: 28px;
+      }
+
+      .brand img {
+        width: 128px;
+        height: 128px;
+        border-radius: 28px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+      }
+
+      .brand h1 {
+        margin: 0;
+        font-family: "Instrument Serif", Georgia, serif;
+        font-weight: 400;
+        font-size: clamp(3rem, 9vw, 4.75rem);
+        letter-spacing: -0.03em;
+        line-height: 0.95;
+      }
+
+      .brand p {
+        margin: 0;
+        max-width: 36rem;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .nav {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 10px 18px;
+        margin: 22px 0 36px;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .nav a {
+        color: var(--muted);
+        text-decoration: none;
+        border-bottom: 1px solid transparent;
+      }
+
+      .nav a:hover {
+        color: var(--accent);
+        border-bottom-color: var(--accent);
+      }
+
+      .demo {
+        margin: 0 0 56px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        overflow: hidden;
+        background: #000;
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4);
+      }
+
+      .demo video {
+        display: block;
+        width: 100%;
+        height: auto;
+        vertical-align: middle;
+        background: #000;
+      }
+
+      .demo figcaption {
+        padding: 12px 16px;
+        font-size: 12px;
+        color: var(--muted);
+        border-top: 1px solid var(--line);
+        background: rgba(0, 0, 0, 0.55);
+      }
+
+      section {
+        margin: 0 0 52px;
+      }
+
+      section h2 {
+        margin: 0 0 14px;
+        font-family: "Instrument Serif", Georgia, serif;
+        font-size: clamp(1.8rem, 4vw, 2.4rem);
+        font-weight: 400;
+        letter-spacing: -0.02em;
+      }
+
+      section p,
+      section li {
+        color: var(--muted);
+      }
+
+      section p strong,
+      section li strong {
+        color: var(--ink);
+        font-weight: 500;
+      }
+
+      .lede {
+        font-size: 16px;
+        color: var(--ink);
+        max-width: 40rem;
+      }
+
+      .grid {
+        display: grid;
+        gap: 14px;
+        margin-top: 18px;
+      }
+
+      @media (min-width: 720px) {
+        .grid.cols-3 {
+          grid-template-columns: repeat(3, 1fr);
+        }
+        .grid.cols-2 {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+
+      .tile {
+        padding: 18px 18px 16px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--card);
+      }
+
+      .tile h3 {
+        margin: 0 0 8px;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+
+      .tile p {
+        margin: 0;
+        font-size: 13px;
+      }
+
+      pre.arch {
+        margin: 18px 0 0;
+        padding: 18px 16px;
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #08090b;
+        color: #cfd6c2;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .arch .hi {
+        color: var(--accent);
+      }
+
+      ol.steps,
+      ul.plain {
+        margin: 14px 0 0;
+        padding-left: 1.2rem;
+      }
+
+      ol.steps li,
+      ul.plain li {
+        margin: 0 0 10px;
+      }
+
+      code,
+      .mono {
+        font-family: inherit;
+        color: var(--ink);
+        background: var(--accent-dim);
+        padding: 0.1em 0.35em;
+        border-radius: 4px;
+      }
+
+      pre.shell {
+        margin: 14px 0 0;
+        padding: 16px;
+        overflow-x: auto;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: #08090b;
+        color: #d7e0c8;
+        font-size: 12.5px;
+      }
+
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--accent-dim);
+        color: var(--accent);
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .status::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 12px var(--accent);
+      }
+
+      footer {
+        margin-top: 64px;
+        padding-top: 22px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 12px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px 24px;
+        justify-content: space-between;
+      }
+
+      footer a {
+        color: var(--ink);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header class="brand">
+        <img src="dogsh.png" width="128" height="128" alt="dogsh" />
+        <h1>dogsh</h1>
+        <p>
+          A continuity terminal — one real shell session that follows you from a
+          native macOS window into Chrome, across tabs, and onto Edge Canary on
+          Android.
+        </p>
+        <span class="status">public preview · protocol v10</span>
+      </header>
+
+      <nav class="nav" aria-label="Sections">
+        <a href="#demo">Demo</a>
+        <a href="#use">Use it</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#state">Current state</a>
+        <a href="#possibility">Possibility</a>
+      </nav>
+
+      <figure class="demo" id="demo">
+        <!--
+          Demo video: hosted next to this page as demo.mp4.
+          To point at another URL later, change the <source src="..."> below.
+        -->
+        <video
+          controls
+          playsinline
+          preload="metadata"
+          poster="dogsh.png"
+          aria-label="dogsh continuity demo"
+        >
+          <source src="demo.mp4" type="video/mp4" />
+        </video>
+        <figcaption>
+          Continuity demo — native dogsh → Chrome for Testing → Edge Canary on
+          the emulator. Silent H.264, full capture resolution.
+        </figcaption>
+      </figure>
+
+      <section id="use">
+        <h2>How you can use it</h2>
+        <p class="lede">
+          Run a real shell in the native app. When you focus Chrome, the same
+          session appears as an overlay on the page. Switch tabs — it follows.
+          On a phone with Edge Canary + the sideloaded extension, it can follow
+          there too.
+        </p>
+        <div class="grid cols-3">
+          <div class="tile">
+            <h3>1 · Native</h3>
+            <p>
+              <code>cd app && npm start</code> (or open the packaged
+              <code>.app</code>). Your login shell is a real pty — vim, htop,
+              Cursor <code>agent</code>, anything.
+            </p>
+          </div>
+          <div class="tile">
+            <h3>2 · Chrome</h3>
+            <p>
+              Build the extension (<code>cd extension && npm run build</code>),
+              Load unpacked → <code>extension/dist</code>. Cmd-tab to any normal
+              site; the terminal flies in.
+            </p>
+          </div>
+          <div class="tile">
+            <h3>3 · Phone</h3>
+            <p>
+              Pack <code>dogsh.crx</code>, sideload into Edge <strong>Canary</strong>,
+              <code>adb reverse</code> the daemon port, set options to
+              <code>ws://localhost:&lt;port&gt;</code>, open a page — overlay follows.
+            </p>
+          </div>
+        </div>
+        <pre class="shell"># quick path
+cd app && npm install && npm start
+cd ../extension && npm install && npm run build
+# chrome://extensions → Load unpacked → extension/dist
+
+# Edge Canary (Android)
+cd extension && npm run pack   # → build/dogsh.crx</pre>
+      </section>
+
+      <section id="architecture">
+        <h2>Architecture</h2>
+        <p class="lede">
+          The shell lives in a <strong>Session Host</strong> (daemon). Everything
+          you see is a thin <strong>face</strong>. Ownership is a lease on who may
+          type and resize — not where the process lives.
+        </p>
+        <pre class="arch">
+<span class="hi">Faces</span>  native Electron · Chrome / Edge tabs · optional network PWA
+   │  WebSocket  (default ws://127.0.0.1:47703)
+   ▼
+<span class="hi">Face gateway</span>     hello / signal / input / caps
+   ▼
+<span class="hi">Lease arbiter</span>    derives sole | mute | monitor from {visible, focused}
+   ▼
+<span class="hi">Session mux</span>      active session, snapshots, grid broadcast
+   ▼
+<span class="hi">Shell backend</span>    node-pty (live) · guest backend (checkpoint path)
+   ▼
+<span class="hi">Persist</span>          scrollback / grid / titles under ~/.dogsh/state
+</pre>
+        <div class="grid cols-2" style="margin-top: 18px">
+          <div class="tile">
+            <h3>Derived ownership</h3>
+            <p>
+              Faces report raw focus/visibility. The daemon picks the owner and
+              broadcasts <code>owner-state</code> + <code>leaseRole</code>. No
+              client “claims” the terminal.
+            </p>
+          </div>
+          <div class="tile">
+            <h3>Handoff = reveal</h3>
+            <p>
+              Faces stay attached while hidden. Switching surfaces only reveals
+              an already-warm renderer — that’s why the motion feels immediate.
+            </p>
+          </div>
+          <div class="tile">
+            <h3>Owner drives size</h3>
+            <p>
+              The owning face reports fitted cols/rows; the daemon resizes the
+              pty and every face follows the grid (critical for TUIs like
+              <code>agent</code>).
+            </p>
+          </div>
+          <div class="tile">
+            <h3>Remoteness</h3>
+            <p>
+              Loopback vs remote is observed from the socket address. Tokens
+              gate non-loopback hellos. No ADB-specific hacks in the host.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="state">
+        <h2>Current state</h2>
+        <p class="lede">
+          Public repo with a working macOS native face, Chrome MV3 overlay, and
+          an experimental Edge Canary Android path. CI packages a debug
+          <code>.app</code>, extension <code>dist/</code>, and <code>.crx</code>.
+        </p>
+        <ul class="plain">
+          <li>
+            <strong>Works today</strong> — native ↔ Chrome follow, multi-tab
+            overlay, dynamic grid, flood control, scrollback persistence,
+            Cursor Agent / TUI handoff on desktop.
+          </li>
+          <li>
+            <strong>Experimental</strong> — Edge Canary on Android sideload;
+            phone sheet resize / maximize; USB <code>adb reverse</code> to a
+            loopback daemon.
+          </li>
+          <li>
+            <strong>CI</strong> — GitHub Actions on macOS 14 builds the debug app
+            + Chrome extension + Canary crx artifacts.
+          </li>
+          <li>
+            <strong>Not yet</strong> — migrating a live Mac pty across machines
+            (hot-potato moves authority + scrollback; process continuity needs
+            the guest/webshell backend).
+          </li>
+        </ul>
+      </section>
+
+      <section id="possibility">
+        <h2>Possibility</h2>
+        <p class="lede">
+          The north star is a terminal that stays with you the way a phone call
+          stays with you — desk, browser, pocket — without pasting scrollback or
+          SSHing into a second brain.
+        </p>
+        <ul class="plain">
+          <li>
+            <strong>Same machine continuity</strong> is the product now: one pty,
+            many faces, lease-based focus.
+          </li>
+          <li>
+            <strong>Cross-device presence</strong> is partially here via network
+            faces + phone extension; tightening discovery (one port / rendezvous)
+            so faces can’t drift onto stale endpoints.
+          </li>
+          <li>
+            <strong>Cross-machine process continuity</strong> is the hard sequel:
+            checkpointable guest shells so a handoff doesn’t restart the world.
+          </li>
+          <li>
+            <strong>You can use it</strong> as a daily driver for agentic CLI
+            work that must survive cmd-tab, tab switches, and a glance at the
+            phone — as long as you stay on the supported surface set above.
+          </li>
+        </ul>
+      </section>
+
+      <footer>
+        <span>dogsh · continuity terminal</span>
+        <span>
+          <a href="https://github.com/maceip/dogsh">github.com/maceip/dogsh</a>
+        </span>
+      </footer>
+    </main>
+  </body>
+</html>
