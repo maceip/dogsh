@@ -9,14 +9,18 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "sim": "tsc && node daemon/sim.js",
-    "start": "tsc && electron .",
+    "potato": "tsc && ELECTRON_RUN_AS_NODE=1 electron daemon/potato-test.js",
+    "start": "tsc && node scripts/stamp-electron-icon.js && electron .",
     "daemon": "tsc && ELECTRON_RUN_AS_NODE=1 electron daemon/index.js",
     "smoke": "tsc && ELECTRON_RUN_AS_NODE=1 electron daemon/index.js --smoke",
-    "package": "electron-packager . dogsh --platform=darwin --out=build --overwrite --no-asar --icon=assets/dogsh.icns --icon=assets/dogsh.icon --ignore=\"^/build($|/)\" --ignore=\"^/\\.\"",
+    "package": "node scripts/package-mac.js",
+    "package:mac": "node scripts/package-mac.js",
+    "launch": "npm run package:mac && open -n \"build/dogsh-darwin-$(node -p \"process.arch==='arm64'?'arm64':'x64'\")/dogsh.app\"",
     "rebuild": "electron-rebuild -f -w node-pty",
-    "postinstall": "electron-rebuild -f -w node-pty"
+    "postinstall": "electron-rebuild -f -w node-pty && node scripts/stamp-electron-icon.js"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-serialize": "^0.13.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/addon-webgl": "^0.18.0",

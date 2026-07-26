@@ -7,12 +7,12 @@
 import {
   app,
   BrowserWindow,
-  nativeTheme,
   Menu,
   ipcMain,
   screen,
   clipboard,
   shell as electronShell,
+  nativeImage,
 } from 'electron';
 import path from 'path';
 import fs from 'fs';
@@ -21,6 +21,7 @@ import { spawn, execFile } from 'child_process';
 import WebSocket from 'ws';
 
 import CONFIG from './shared/config.js';
+import { HostUplinkMute } from './host-uplink-mute.js';
 
 app.setName('dogsh');
 // e2e mode: never show/focus the native window, so automated runs don't steal
@@ -28,6 +29,7 @@ app.setName('dogsh');
 const HIDDEN = process.env.DOGSH_HIDDEN === '1';
 const PORT = Number(process.env.DOGSH_PORT) || CONFIG.port;
 const DAEMON_PATH = path.join(__dirname, 'daemon', 'index.js');
+const uplinkMute = new HostUplinkMute();
 
 // ---------------------------------------------------------------------------
 // Daemon lifecycle. The daemon is Node code but runs under THIS Electron
@@ -141,8 +143,47 @@ function currentSig(): { visible: boolean; focused: boolean } {
     focused: alive && win!.isFocused(),
   };
 }
+
+function cursorOverWin(): boolean {
+  if (!win || win.isDestroyed()) return false;
+  try {
+    const pt = screen.getCursorScreenPoint();
+    const b = win.getBounds();
+    return pt.x >= b.x && pt.x <= b.x + b.width && pt.y >= b.y && pt.y <= b.y + b.height;
+  } catch {
+    return false;
+  }
+}
+
+function clearHandoffQuiet(why: string): void {
+  if (!uplinkMute.clear(why)) return;
+  console.log(`[dogsh] host uplink mute cleared (${why})`);
+  try {
+    const log = path.join(os.homedir(), 'Library', 'Logs', 'dogsh', 'flicker.log');
+    fs.mkdirSync(path.dirname(log), { recursive: true });
+    fs.appendFileSync(log, `${new Date().toISOString()} [handoffQuiet] cleared (${why})\n`);
+  } catch {
+    /* ignore */
+  }
+  sendSignal();
+}
+
 function sendSignal(): void {
-  hostSend({ type: 'signal', ...currentSig() });
+  const sig = currentSig();
+  const realFocused = sig.focused;
+  sig.focused = uplinkMute.reportFocused(realFocused);
+  try {
+    const log = path.join(os.homedir(), 'Library', 'Logs', 'dogsh', 'flicker.log');
+    fs.mkdirSync(path.dirname(log), { recursive: true });
+    fs.appendFileSync(
+      log,
+      `${new Date().toISOString()} [host-signal] v=${sig.visible} f=${sig.focused}` +
+        ` (realF=${realFocused} quiet=${uplinkMute.isMuted})\n`
+    );
+  } catch {
+    /* ignore */
+  }
+  hostSend({ type: 'signal', ...sig });
 }
 
 function connectHost(): void {
@@ -191,27 +232,27 @@ function handleDaemonMessage(msg: DogshDaemonMsg): void {
       // window) would steal OS focus on a timer.
       const owner = msg.owner;
       if (lastOwner === null) {
-        // First state on this socket. Render the reveal direction only: if
-        // the terminal lives here, show it. If it lives in a tab, do NOT
-        // hide a window the user may have just opened — their focus (a real
-        // signal) is what decides where the terminal goes next.
         lastOwner = owner;
+        uplinkMute.onLease(owner);
         if (owner === 'native' && !msg.doghouse) revealNative();
+        else if (uplinkMute.isMuted) sendSignal();
         break;
       }
-      if (owner === lastOwner) break;
+      if (owner === lastOwner) {
+        const wasMuted = uplinkMute.isMuted;
+        uplinkMute.onLease(owner);
+        if (wasMuted !== uplinkMute.isMuted) sendSignal();
+        break;
+      }
       const prev = lastOwner;
       lastOwner = owner;
       if (owner === 'native') {
-        // msg.doghouse guards the doghouse-entry grant: ownership pins to
-        // native while the window animates INTO the island — revealing
-        // (show + focus) here would fight that animation.
+        uplinkMute.onLease(owner);
         if (!msg.doghouse) revealNative();
-      } else if (prev === 'native') {
-        // native -> tab handoff: the real window hides. app.hide() (not
-        // win.hide()) keeps dogsh in cmd-tab; macOS auto-unhides it — firing
-        // 'show'/'activate' — when the user switches back.
-        if (!HIDDEN) app.hide();
+      } else {
+        uplinkMute.onLease(owner);
+        sendSignal();
+        void prev;
       }
       break;
     }
@@ -267,10 +308,16 @@ function createWindow(): void {
   win = new BrowserWindow({
     width: 820,
     height: 520,
+    minWidth: 320,
+    minHeight: 220,
     useContentSize: true,
     titleBarStyle: 'hiddenInset',
     backgroundColor: CONFIG.theme.background,
-    resizable: false,
+    icon: appIconImage(),
+    // Dynamic grid: the user sizes the window; the renderer fits the grid to
+    // it and reports caps; the daemon resizes the session (owner-drives-size)
+    // and every face follows the grid broadcast.
+    resizable: true,
     fullscreenable: false,
     show: !HIDDEN,
     webPreferences: {
@@ -287,8 +334,15 @@ function createWindow(): void {
   // Raw facts only: every real window event reports current levels; the
   // daemon derives ownership. Focus is the decisive one — the arbiter's
   // host-focused rule brings the terminal home whenever the user is
-  // demonstrably here.
-  win.on('focus', () => sendSignal());
+  // demonstrably here. handoffQuiet suppresses focus DURING tab ownership
+  // unless the cursor is over this window (user clicked us back).
+  win.on('focus', () => {
+    // While a tab/phone owns, NEVER clear quiet on focus alone — TCC sheets,
+    // agent chronicle, and activate storms focus us with the cursor often
+    // still over the tiled window (false "user came back"). Presence clears
+    // quiet only via real mousedown/keydown (dogsh:user-present).
+    sendSignal();
+  });
   win.on('show', () => sendSignal());
   win.on('hide', () => sendSignal());
   win.on('blur', () => {
@@ -298,6 +352,16 @@ function createWindow(): void {
     sendSignal();
   });
   win.on('move', () => reportBounds());
+  // User (or OS tile) resizes: tell the renderer so it can refit caps → PTY.
+  // The renderer also watches #term via ResizeObserver; this is a belt-and-
+  // suspenders path for Electron window events.
+  const userResize = () => {
+    if (win && !win.isDestroyed()) win.webContents.send('dogsh:user-resize');
+    reportBounds();
+  };
+  win.on('will-resize', userResize);
+  win.on('resized', userResize);
+  win.on('resize', userResize);
   win.on('closed', () => {
     win = null;
   });
@@ -507,7 +571,14 @@ function animateWindow(
 ): void {
   const steps = 14;
   let i = 0;
-  w.setResizable(true); // programmatic resize of a resizable:false window is flaky
+  // Programmatic resize of a resizable:false window is flaky; restore the
+  // window's own setting afterwards (the native face is resizable by design,
+  // the island is not — this helper animates both).
+  const wasResizable = w.isResizable();
+  w.setResizable(true);
+  // The doghouse animation shrinks far below the face's minimum size.
+  const minSize = w.getMinimumSize();
+  w.setMinimumSize(1, 1);
   const timer = setInterval(() => {
     if (w.isDestroyed()) return clearInterval(timer);
     i++;
@@ -522,7 +593,8 @@ function animateWindow(
     w.setOpacity(fade === 'out' ? 1 - 0.92 * e : 0.08 + 0.92 * e);
     if (i >= steps) {
       clearInterval(timer);
-      w.setResizable(false);
+      w.setMinimumSize(minSize[0], minSize[1]);
+      w.setResizable(wasResizable);
       done();
     }
   }, Math.max(8, ms / steps));
@@ -582,6 +654,8 @@ function sendEdit(cmd: string): void {
 }
 ipcMain.on('dogsh:clipboard-write', (_e, text) => clipboard.writeText(String(text ?? '')));
 ipcMain.handle('dogsh:clipboard-read', () => clipboard.readText());
+// Renderer (or titlebar-adjacent) presence: user is back at the native face.
+ipcMain.on('dogsh:user-present', () => clearHandoffQuiet('renderer-present'));
 ipcMain.on('dogsh:open-external', (_e, url) => {
   if (typeof url === 'string' && /^https?:\/\//i.test(url)) electronShell.openExternal(url);
 });
@@ -607,19 +681,29 @@ ipcMain.handle('dogsh:context-menu', (_e, opts: { hasSelection?: boolean } | und
   });
 });
 
-// Dock + cmd-tab icon for DEV RUNS ONLY (`electron .`, where the dock shows
-// the stock Electron icon). The packaged app must NOT override its icon at
-// runtime: app.dock.setIcon() bypasses macOS 26's Liquid Glass pipeline
-// (squircle, tint modes), which is exactly what made the icon look pasted-on.
-// The bundle ships assets/dogsh.icon (compiled by actool) + dogsh.icns.
-function updateDockIcon(): void {
-  if (process.platform !== 'darwin' || !app.dock || app.isPackaged) return;
-  const variant = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
-  try {
-    app.dock.setIcon(path.join(__dirname, 'assets', `dogsh_tile_${variant}_1024.png`));
-  } catch {
-    /* missing asset shouldn't kill the app */
+// App icon from dogsh.png. Packaged builds use assets/dogsh.icns + dogsh.icon
+// (Liquid Glass). Unpackaged `electron .` also stamps electron.icns via
+// scripts/stamp-electron-icon.js; dock.setIcon reinforces at runtime.
+function appIconPath(): string {
+  const master = path.join(__dirname, 'assets', 'dogsh.png');
+  if (fs.existsSync(master)) return master;
+  return path.join(__dirname, 'assets', 'dogsh_1024.png');
+}
+
+function appIconImage(): Electron.NativeImage {
+  return nativeImage.createFromPath(appIconPath());
+}
+
+function applyDevAppIcon(): void {
+  if (process.platform !== 'darwin' || !app.dock) return;
+  // Packaged: leave Liquid Glass bundle alone (setIcon bypasses it).
+  if (app.isPackaged) return;
+  const img = appIconImage();
+  if (img.isEmpty()) {
+    console.warn('[dogsh] dock icon empty — expected', appIconPath());
+    return;
   }
+  app.dock.setIcon(img);
 }
 
 app.whenReady().then(() => {
@@ -627,10 +711,9 @@ app.whenReady().then(() => {
   if (process.argv.includes('--install-daemon')) return installDaemon((code) => app.exit(code));
   if (process.argv.includes('--uninstall-daemon')) return uninstallDaemon((code) => app.exit(code));
 
+  applyDevAppIcon();
   spawnDaemon();
   connectHost();
-  updateDockIcon();
-  nativeTheme.on('updated', updateDockIcon);
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       {
@@ -680,6 +763,9 @@ app.whenReady().then(() => {
   const bringHome = () => {
     if (HIDDEN) return;
     if (!win) return createWindow();
+    // Cmd-tab / dock / open: user explicitly returned — clear uplink mute so
+    // host focus can reclaim the lease (quiet exists for TCC storms, not this).
+    clearHandoffQuiet('did-become-active');
     // Explicitly summoning the terminal lets it out of the doghouse;
     // exitDoghouse restores + focuses the window, whose focus signal
     // brings the terminal home.

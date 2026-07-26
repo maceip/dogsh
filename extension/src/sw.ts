@@ -1,7 +1,13 @@
-// Service worker: only job is to guarantee the offscreen document (the
-// WebSocket hub) exists. All terminal traffic flows content-script <-> port
-// <-> offscreen <-> daemon; none of it depends on this worker staying alive.
+// Service worker: guarantees a WebSocket hub exists. On desktop Chrome that
+// hub is the offscreen document (immune to SW idling); on browsers WITHOUT
+// the offscreen API (Edge for Android) this worker hosts the sockets itself
+// — live WebSocket traffic resets the MV3 idle timer (Chromium 116+), and
+// the daemon's 2s owner-state re-assert keeps traffic flowing, so the
+// worker stays alive exactly as long as a daemon is attached.
+const HAS_OFFSCREEN = typeof chrome.offscreen !== 'undefined';
+
 async function ensureOffscreen(): Promise<void> {
+  if (!HAS_OFFSCREEN) return; // this worker IS the hub (Edge Android)
   const contexts = await chrome.runtime.getContexts({
     contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
   });
@@ -18,12 +24,119 @@ async function ensureOffscreen(): Promise<void> {
   }
 }
 
+// Fallback hub (Edge Android): identical contract to offscreen.ts — port
+// name selects the e2e override port, the first port message carries the
+// daemon URL config, everything else is forwarded verbatim. Registered only
+// when the offscreen API is missing, so exactly ONE context ever answers a
+// 'dogsh-tab' port.
+if (!HAS_OFFSCREEN) {
+  const DEFAULT_PORT = 47703;
+  chrome.runtime.onConnect.addListener((port) => {
+    const m = /^dogsh-tab(?:#(\d+))?$/.exec(port.name);
+    if (!m) return;
+    const defaultUrl = `ws://127.0.0.1:${Number(m[1]) || DEFAULT_PORT}`;
+    let ws: WebSocket | null = null;
+    let daemonUrl: string | null = null;
+    let closedByPort = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function openSocket(): void {
+      ws = new WebSocket(daemonUrl || defaultUrl);
+      ws.onopen = () => port.postMessage({ type: 'bridge-up' });
+      ws.onmessage = (ev) => {
+        try {
+          port.postMessage(JSON.parse(ev.data as string));
+        } catch {
+          /* port gone mid-flight */
+        }
+      };
+      ws.onclose = () => {
+        if (closedByPort) return;
+        try {
+          port.postMessage({ type: 'bridge-down' });
+        } catch {
+          /* port gone */
+        }
+        retryTimer = setTimeout(() => {
+          if (!closedByPort) openSocket();
+        }, 2000);
+      };
+      ws.onerror = () => ws?.close();
+    }
+
+    port.onMessage.addListener((msg) => {
+      if (msg && msg.type === 'dogsh-config') {
+        if (ws) return;
+        daemonUrl = typeof msg.url === 'string' && msg.url ? msg.url : null;
+        openSocket();
+        return;
+      }
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+    });
+    port.onDisconnect.addListener(() => {
+      closedByPort = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      if (ws) ws.close();
+    });
+  });
+}
+
+// Injection coverage beyond the manifest. The manifest content script IS
+// honored on desktop Chrome AND on Edge for Android — empirically audited,
+// see EDGE-ANDROID-EXTENSION-SUPPORT.md. (An earlier claim here that Edge
+// "never schedules it" was an artifact of probing the zombie devtools socket
+// of a dead Edge instance; it looked like no isolated world was ever
+// created.) Two redundant layers are kept anyway: Android extension support
+// is officially experimental and has shifted under us before, and content.js
+// is idempotent (window.__dogshInjected + it removes stale hosts), so
+// duplicate delivery costs nothing:
+//   1. a dynamically registered content script (survives a browser that
+//      honors chrome.scripting registration but drops manifest scripts), and
+//   2. a tabs.onUpdated executeScript pass on every completed navigation.
+async function ensureDynamicContentScript(): Promise<void> {
+  if (!chrome.scripting || !chrome.scripting.registerContentScripts) return;
+  try {
+    const existing = await chrome.scripting.getRegisteredContentScripts({ ids: ['dogsh-cs'] });
+    if (existing && existing.length) return;
+  } catch {
+    /* getRegistered not supported; fall through and try to register */
+  }
+  try {
+    await chrome.scripting.registerContentScripts([
+      {
+        id: 'dogsh-cs',
+        matches: ['http://*/*', 'https://*/*'],
+        js: ['content.js'],
+        runAt: 'document_idle',
+        allFrames: false,
+      },
+    ]);
+  } catch {
+    /* already registered or unsupported — the onUpdated fallback still covers us */
+  }
+}
+
+function injectInto(tabId: number): void {
+  chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }).catch(() => {
+    /* chrome://, web store, PDF viewer, or a tab that navigated away — fine */
+  });
+}
+
+// Redundant delivery on every completed top-frame load; an idempotent no-op
+// wherever the manifest script already ran.
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  if (info.status !== 'complete') return;
+  if (!tab || !tab.url || !/^https?:/.test(tab.url)) return;
+  injectInto(tabId);
+});
+
 // On install/reload/update: re-arm every open tab. Reloading an extension
 // kills its content scripts everywhere and Chrome never reinjects them on its
 // own — without this, "reload the extension" silently means "the overlay is
 // gone until you also refresh every tab by hand".
 chrome.runtime.onInstalled.addListener(async () => {
   ensureOffscreen();
+  ensureDynamicContentScript();
   // A persisted mode:'off' would make a fresh install look broken (overlay
   // hidden everywhere). ghost/min are kept — they're visibly "on".
   chrome.storage.local.get(['mode'], ({ mode }) => {
@@ -43,7 +156,10 @@ chrome.runtime.onInstalled.addListener(async () => {
     /* no tabs access; manifest injection still covers new page loads */
   }
 });
-chrome.runtime.onStartup.addListener(ensureOffscreen);
+chrome.runtime.onStartup.addListener(() => {
+  ensureOffscreen();
+  ensureDynamicContentScript();
+});
 
 // The OS gave/took a Chrome window's focus (cmd-tab, dock click). The active
 // tab's renderer frequently sees NO event for this — from its own point of

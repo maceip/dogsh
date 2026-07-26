@@ -1,93 +1,123 @@
-# dogsh — a terminal that follows you around
+# dogsh
 
-Demo of terminal-session continuity across surfaces on one machine: a **real
-pty** (your login shell — htop, vim, any ncurses app works) with two faces:
+<p align="center">
+  <img src="dogsh.png" width="256" height="256" alt="dogsh" />
+</p>
 
-- **Native face** — an Electron window (same architecture as Hyper/VS Code's
-  terminal: xterm.js + node-pty, no mocked terminal anywhere).
-- **Tab face** — a Chrome extension overlay injected into every page,
-  rendering the *same* live session.
+A **continuity terminal**: one real shell session (pty) that follows you across
+surfaces — native macOS app, Chrome tabs, and (experimental) Edge Canary on
+Android — with scrollback and live output intact.
 
-Switch from the app to Chrome and the terminal flies onto the page you're
-looking at, with all scrollback and streaming output intact. Switch tabs and
-it's simply already there. Switch back to the app and it comes home.
+Switch to the browser and the terminal flies onto the page. Switch tabs and
+it’s already there. Pick up the phone and it can follow there too.
 
-## How it works
+## What you get
 
-The session lives in a standalone daemon (`app/daemon/`, run as Node under the
-Electron binary); the Electron app (`app/main.ts`) is just the native host +
-face. Sources are TypeScript 7 — `tsc` emits the runtime `.js` next to each
-source (the extension bundles straight from `.ts` via esbuild):
+| Surface | What it is |
+|--------|------------|
+| **Native app** | Electron window (`app/`) — xterm.js + node-pty |
+| **Chrome extension** | MV3 overlay on every normal page (`extension/dist`) |
+| **Edge Canary (Android)** | Same extension, packed as `.crx` for sideload |
+| **Daemon** | Owns the pty + session; faces attach over WebSocket (`ws://127.0.0.1:47703`) |
+
+Ownership is **derived** from real focus/visibility signals (not clients
+claiming the terminal). Protocol and lease rules live in `app/daemon/`.
+
+## Repository layout
 
 ```
-                                     ┌── native face (Electron renderer, xterm.js WebGL)
-real pty (zsh) ── headless xterm ────┤
-  node-pty        + serialize       WS└── every tab (content-script overlay, xterm.js)
-                  (snapshots)      127.0.0.1:47703
+dogsh/
+├── app/                 # Electron native face + session daemon (TypeScript)
+│   ├── daemon/          # pty, mirror, lease engine, persistence
+│   ├── renderer/        # native window UI
+│   ├── phone/           # optional PWA-ish remote face served by the daemon
+│   ├── assets/          # icons
+│   └── scripts/         # package-mac.js, icon stamp, …
+├── extension/           # MV3 browser faces (Chrome + Edge Android)
+│   ├── src/             # content / service worker / offscreen / options
+│   ├── static/          # manifest, HTML, icons
+│   ├── dist/            # build output — Load unpacked (Chrome)
+│   └── build/           # dogsh.crx (+ dogsh.pem signing key, gitignored)
+├── e2e/                 # glass e2e + headless wire-probe (see e2e/README.md)
+├── ref/                 # design reference images (not runtime)
+└── .github/workflows/   # CI: macOS debug .app + extension dist + .crx
 ```
 
-- Every face stays **attached and rendered while hidden**; a handoff only
-  reveals. Nothing loads at transition time — that's what makes frames matter.
-- New faces get a pixel-exact snapshot (scrollback/colors/cursor/alt-screen)
-  in one write via the xterm serialize addon, then join the live stream.
-- Ownership is **derived, never claimed** (protocol v6): faces report raw
-  `{visible, focused}` signals from real events; the daemon's arbiter
-  (`app/daemon/arbiter.ts`) derives which face owns the terminal from that
-  ledger and broadcasts `owner-state`; every face renders itself from the
-  broadcast. Handoffs involving the native window run a FLIP transform
-  animation against the window's last screen rect (converted to viewport
-  coords in the overlay). The arbiter's contract is executable:
-  `cd app && npm run sim` (scripted replays of every historical arbitration
-  bug + seeded fuzz), and `node e2e/wire-probe.js` replays the same cases
-  against the real daemon over real sockets.
-- Extension internals: content scripts talk through a `chrome.runtime` port to
-  an offscreen document that owns the WebSockets (immune to page CSP and
-  service-worker idling). WebGL rendering is enabled only in the visible tab.
+Generated / local-only (not committed): `app/build/`, `extension/dist/`,
+`extension/build/`, `e2e/artifacts/`, `node_modules/`, `.cursor/`.
 
-## Run it
+## Requirements
 
-Requires macOS, Node 20+, Xcode CLT (for node-pty), Chrome 116+.
+- macOS (native app; CI packages darwin only)
+- Node 20+
+- Xcode CLT (for `node-pty`)
+- Chrome 116+ for the desktop extension
+- Optional: Android emulator/device + Edge **Canary** for the phone crx path
+
+## Build & run (local)
 
 ```bash
-# 1. Native app + daemon (npm start compiles the TypeScript first)
+# Native app (dev)
 cd app && npm install && npm start
 
-# 2. Extension (separate terminal; build = tsc --noEmit type-check + esbuild)
+# Or package a debug .app (no asar, ad-hoc codesign)
+cd app && npm run package:mac
+open app/build/dogsh-darwin-arm64/dogsh.app   # or …-x64… on Intel
+
+# Chrome extension (unpacked)
 cd extension && npm install && npm run build
-# then: chrome://extensions -> Developer mode -> Load unpacked -> extension/dist
+# chrome://extensions → Developer mode → Load unpacked → extension/dist
+
+# Edge Android Canary (.crx)
+cd extension && npm run pack
+# → extension/build/dogsh.crx  (keep build/dogsh.pem — it pins the extension id)
 ```
 
-## Demo script
+Point the phone extension options at `ws://localhost:<port>` with
+`adb reverse tcp:<port> tcp:<port>` when using USB/emulator loopback.
 
-1. In the dogsh window, run something alive: `htop`, or `while true; do date; sleep 1; done`.
-2. Cmd-tab to Chrome with any normal website open → the terminal flies from
-   the window's position into the page, still streaming.
-3. Type into it (it's the same shell). Quit htop, start `vim`.
-4. Switch tabs → it's already there, same spot, same session.
-5. Cmd-tab back to dogsh → the overlay flies out, the native window returns
-   with everything you did in the browser.
+## CI
 
-## Protocol smoke tests (no GUI interaction needed)
+GitHub Actions (`.github/workflows/ci.yml`) runs on **macos-14** and:
+
+1. Compiles the app, runs the arbiter sim, packages a **macOS debug `.app`**
+2. Builds the **Chrome extension** (`extension/dist`)
+3. Packs the **Edge Canary `.crx`**
+4. Uploads artifacts as `dogsh-macos-build`
 
 ```bash
-cd app
-npm run smoke          # compiles, then pty roundtrip + mirror snapshot, output-gated
-npm run sim            # ownership arbiter: scripted bug replays + seeded fuzz
-node ../e2e/wire-probe.js  # same contract against the real daemon over real sockets
+# Trigger locally the same steps the workflow runs:
+cd app && npm ci && npm run build && npm run sim && npm run package:mac
+cd ../extension && npm ci && npm run build && npm run pack
 ```
 
-## Known limitations (deliberate demo scope)
+CI mints an ephemeral `dogsh.pem` if none is present — that extension id will
+**not** match your local sideload. Keep your release `.pem` private and out of git.
 
-- Fixed terminal grid (90×26, `shared/config.js`) — no resize negotiation, so
-  every face is pixel-identical, which strengthens the illusion.
-- Content scripts can't run on `chrome://`, Web Store, or PDF tabs; the
-  terminal stays wherever it was when you focus those.
-- The daemon accepts any localhost WebSocket client (no auth) — fine for a
-  demo, not for shipping.
-- Sessions survive the app (they live in the daemon; `dogsh --install-daemon`
-  registers it with launchd), but not a daemon crash or reboot — no tmux-style
-  on-disk persistence.
-- Screen→viewport mapping approximates Chrome's toolbar height
-  (`outerHeight - innerHeight`); devtools docked top/left will skew it.
+## Tests
 
-See `RESEARCH.md` for the full surface-by-surface feasibility study.
+```bash
+cd app && npm run smoke    # pty + mirror smoke
+cd app && npm run sim      # lease/arbiter scripted + fuzz
+node e2e/wire-probe.js     # headless protocol against a real daemon
+cd e2e && npm test         # glass e2e (Chrome for Testing + Edge Canary)
+```
+
+Glass e2e rules: see [`e2e/README.md`](e2e/README.md). Do not hand-drive
+browsers or invent side probes — the harness owns Chrome for Testing and Edge.
+
+## Phone notes
+
+- **PWA face** — daemon can serve a remote face when bound beyond loopback
+  (`DOGSH_BIND` + `DOGSH_TOKEN`). See older protocol notes in
+  `app/daemon/ARCHITECTURE.md`.
+- **Edge Canary overlay** — experimental; audit in
+  [`EDGE-ANDROID-EXTENSION-SUPPORT.md`](EDGE-ANDROID-EXTENSION-SUPPORT.md).
+  Stable Edge on Android does not sideload MV3 the same way.
+
+## Known limits
+
+- No content scripts on `chrome://`, Web Store, or PDF tabs.
+- Loopback faces are trusted; tokens gate non-loopback only.
+- Persistence restores scrollback/grid/titles — not running processes.
+- Edge Android extensions are Canary + developer flags only.

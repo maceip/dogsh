@@ -38,6 +38,24 @@
   // Cmd+click opens URLs in the default browser (never inside this window).
   term.loadAddon(new WebLinksAddon.WebLinksAddon((_e, uri) => window.dogsh.openExternal(uri)));
 
+  // Dynamic grid: fit proposes {cols, rows} for the #term box (it accounts
+  // for the padding). Clamps mirror the daemon's Session.resize() bounds so
+  // a proposal is never silently corrected server-side.
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  function fittedDims(): { cols: number; rows: number } | null {
+    try {
+      const d = fit.proposeDimensions();
+      if (!d || !Number.isFinite(d.cols) || !Number.isFinite(d.rows)) return null;
+      return {
+        cols: Math.max(20, Math.min(500, d.cols)),
+        rows: Math.max(5, Math.min(200, d.rows)),
+      };
+    } catch {
+      return null;
+    }
+  }
+
   let webgl: InstanceType<typeof WebglAddon.WebglAddon> | null = null;
   function loadWebgl(): void {
     try {
@@ -67,7 +85,7 @@
   }
 
   // Main process asks us to repaint whenever the window is (re)shown.
-  if (window.dogsh && window.dogsh.onReveal) window.dogsh.onReveal(repaint);
+  // Caps reporting is wired below so reveal also refits the PTY.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') repaint();
   });
@@ -76,6 +94,42 @@
   // v5 attachment identity, learned from hello-ack; rides on every
   // session-scoped message this face sends.
   let sessionId: number | null = null;
+  // Display + input authority: only the owning face shows the live grid and
+  // accepts keystrokes. Window stays visible when away (tiled demos); #away
+  // covers the pixels so the terminal isn't drawn in two places.
+  let owned = true;
+  const awayEl = document.getElementById('away');
+  function setOwned(next: boolean): void {
+    owned = next;
+    if (awayEl) {
+      if (next) awayEl.removeAttribute('data-on');
+      else awayEl.setAttribute('data-on', '');
+    }
+    if (!next) {
+      try {
+        term.blur();
+      } catch {
+        /* ignore */
+      }
+    } else {
+      try {
+        term.focus();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  if (awayEl) {
+    awayEl.addEventListener('mousedown', () => {
+      // Click-to-reclaim: preload already sends user-present; focus so the
+      // host focus signal can land after quiet clears.
+      try {
+        term.focus();
+      } catch {
+        /* ignore */
+      }
+    });
+  }
 
   // Session tab strip (max 2 for now) — same strip as the browser overlay's;
   // the daemon keeps them in lockstep across every face.
@@ -123,39 +177,96 @@
       tabsEl.appendChild(plus);
     }
   }
+
   // Port arrives via query so a DOGSH_PORT-overridden daemon (e2e isolation)
   // reaches its own renderer without touching the shared config.
   const wsPort = Number(new URLSearchParams(location.search).get('port')) || C.port;
+  // Hot-potato redirect (v9): may be replaced by host-fenced.redirectUrl.
+  let daemonWsUrl = `ws://127.0.0.1:${wsPort}`;
+
+  // Window geometry is the source of truth. FitAddon measures #term (which
+  // fills the window below the dragbar); we report those cols/rows as caps
+  // so the owning PTY matches. Never shrink-wrap the window back onto a
+  // hardcoded or foreign grid — tiling / user sizing must stick.
+  let lastCapsKey = '';
+  let capsTimer: ReturnType<typeof setTimeout> | null = null;
+  function reportCaps(force = false): void {
+    const d = fittedDims();
+    if (!d) return;
+    const key = `${d.cols}x${d.rows}`;
+    if (!force && key === lastCapsKey) return;
+    lastCapsKey = key;
+    sendJ({ type: 'caps', caps: { cols: d.cols, rows: d.rows, canResize: true } });
+  }
+  function reportCapsSoon(): void {
+    if (capsTimer) clearTimeout(capsTimer);
+    capsTimer = setTimeout(() => {
+      capsTimer = null;
+      reportCaps();
+    }, 90);
+  }
+
   function connect(): void {
-    ws = new WebSocket(`ws://127.0.0.1:${wsPort}`);
+    ws = new WebSocket(daemonWsUrl);
     ws.onopen = () => {
+      const dims = fittedDims();
       sendJ({
         type: 'hello',
         surface: 'native',
         proto: C.protocolVersion,
-        // Fixed grid today; the dynamic-resize milestone starts computing
-        // this from the window size. canResize flags that this face could.
-        caps: { cols: C.cols, rows: C.rows, canResize: false },
+        // Fitted to the real window — config cols/rows are fallback only.
+        caps: {
+          cols: dims ? dims.cols : term.cols,
+          rows: dims ? dims.rows : term.rows,
+          canResize: true,
+        },
       });
-      reportMeasure();
+      if (dims) lastCapsKey = `${dims.cols}x${dims.rows}`;
     };
     ws.onmessage = (ev) => {
       const msg: DogshDaemonMsg = JSON.parse(ev.data);
       if (msg.type === 'hello-ack') {
         sessionId = msg.sessionId;
+        const role =
+          msg.leaseRole === 'sole' || msg.leaseRole === 'mute' || msg.leaseRole === 'monitor'
+            ? msg.leaseRole
+            : msg.owner === 'native'
+              ? 'sole'
+              : 'mute';
+        setOwned(role === 'sole');
+        reportCaps(true);
+      } else if (msg.type === 'host-fenced') {
+        // Hard mute: drop session identity before redirect (no late lease).
+        sessionId = null;
+        setOwned(false);
+        if (typeof msg.redirectUrl === 'string' && msg.redirectUrl) {
+          daemonWsUrl = msg.redirectUrl;
+        }
+        try {
+          ws?.close();
+        } catch {
+          /* ignore */
+        }
+        ws = undefined;
+        setTimeout(connect, 200);
       } else if (msg.type === 'session-list') {
         sessionId = msg.active; // every face displays the active session
         renderTabs(msg);
+      } else if (msg.type === 'owner-state') {
+        const role =
+          msg.leaseRole === 'sole' || msg.leaseRole === 'mute' || msg.leaseRole === 'monitor'
+            ? msg.leaseRole
+            : msg.owner === 'native'
+              ? 'sole'
+              : 'mute';
+        setOwned(role === 'sole');
       } else if (msg.type === 'snapshot') {
         // Snapshots (re)attach this face to a session: initial hello, a
         // backpressure resync, or a session SWITCH (tabs) all land here.
         if (msg.sessionId != null) sessionId = msg.sessionId;
         // Match the session's grid before writing, or the snapshot wraps
         // wrong (another face may have owned — and resized — the session).
-        if (msg.cols && msg.rows && (term.cols !== msg.cols || term.rows !== msg.rows)) {
-          term.resize(msg.cols, msg.rows);
-          reportMeasure(); // shrink-wrap the window to the new grid
-        }
+        applyGrid(msg.cols, msg.rows);
         term.reset();
         term.write(msg.data);
       } else if (msg.type === 'data') {
@@ -163,10 +274,7 @@
       } else if (msg.type === 'grid') {
         // Owner-drives-size: follow the owner's grid so buffers reflow
         // identically on every face and a later handoff needs no resync.
-        if (msg.cols && msg.rows && (term.cols !== msg.cols || term.rows !== msg.rows)) {
-          term.resize(msg.cols, msg.rows);
-          reportMeasure();
-        }
+        applyGrid(msg.cols, msg.rows);
       } else if (msg.type === 'clear') {
         term.clear();
       } else if (msg.type === 'session-exit') {
@@ -176,14 +284,13 @@
           term.write('\r\n\x1b[31m[session ended]\x1b[0m\r\n');
         }
       }
-      // owner-state is ignored here on purpose: native visibility is the
-      // HOST's job (it gets reveal/hide), never the face's.
     };
     ws.onclose = () => setTimeout(connect, 500);
   }
   connect();
 
   term.onData((data) => {
+    if (!owned) return; // tab/phone owns — don't steal via input-host
     sendJ({ type: 'input', sessionId, data });
   });
 
@@ -211,21 +318,29 @@
     if (cmd) doEdit(cmd);
   });
 
-  // Shrink-wrap the window to the fixed terminal grid.
-  function reportMeasure(): void {
-    const termEl = document.querySelector('#term .xterm-screen');
-    if (!termEl || !ws || ws.readyState !== WebSocket.OPEN) return;
-    const r = termEl.getBoundingClientRect();
-    const dragbar = document.getElementById('dragbar')!.getBoundingClientRect();
-    ws.send(
-      JSON.stringify({
-        type: 'measure',
-        w: r.width + 20, // #term left+right padding (10+10)
-        h: dragbar.height + r.height + 18, // #term top+bottom padding (8+10)
-      })
-    );
+  // Follow a session grid set elsewhere (another face owned). Resize the
+  // local xterm only — do NOT shrink-wrap the Electron window to that grid.
+  function applyGrid(cols?: number, rows?: number): void {
+    if (!cols || !rows || (term.cols === cols && term.rows === rows)) return;
+    term.resize(cols, rows);
   }
-  window.addEventListener('load', () => setTimeout(reportMeasure, 100));
+
+  // Any change to the #term box (user drag, macOS tile, DPI, reveal after
+  // hide) → report fitted caps. Daemon applies them only while native owns;
+  // when we don't own they're still stored so the next ownership tick sizes
+  // the PTY to this window.
+  const termBox = document.getElementById('term')!;
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => reportCapsSoon()).observe(termBox);
+  }
+  window.addEventListener('resize', reportCapsSoon);
+  if (window.dogsh.onUserResize) window.dogsh.onUserResize(reportCapsSoon);
+  if (window.dogsh.onReveal) {
+    window.dogsh.onReveal(() => {
+      repaint();
+      reportCapsSoon();
+    });
+  }
 
   term.focus();
 })();

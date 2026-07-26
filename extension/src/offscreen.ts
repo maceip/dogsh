@@ -6,18 +6,21 @@ const DEFAULT_PORT = 47703;
 chrome.runtime.onConnect.addListener((port) => {
   // Offscreen documents may ONLY use chrome.runtime APIs (no chrome.storage
   // — reading it here throws and kills the bridge for everyone). The content
-  // script owns settings and encodes any port override into the port name:
-  // "dogsh-tab" or "dogsh-tab#47713" (e2e isolation).
+  // script owns settings: the e2e port override rides in the port name
+  // ("dogsh-tab" or "dogsh-tab#47713"), and the REMOTE daemon URL (Edge
+  // Android against a laptop over the tailnet) arrives as the port's first
+  // message ({type:'dogsh-config', url}) — consumed here, never forwarded.
   const m = /^dogsh-tab(?:#(\d+))?$/.exec(port.name);
   if (!m) return;
-  const daemonUrl = `ws://127.0.0.1:${Number(m[1]) || DEFAULT_PORT}`;
+  const defaultUrl = `ws://127.0.0.1:${Number(m[1]) || DEFAULT_PORT}`;
 
   let ws: WebSocket | null = null;
+  let daemonUrl: string | null = null;
   let closedByPort = false;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
   function openSocket(): void {
-    ws = new WebSocket(daemonUrl);
+    ws = new WebSocket(daemonUrl || defaultUrl);
     ws.onopen = () => port.postMessage({ type: 'bridge-up' });
     ws.onmessage = (ev) => {
       try {
@@ -44,6 +47,14 @@ chrome.runtime.onConnect.addListener((port) => {
   }
 
   port.onMessage.addListener((msg) => {
+    // First message is always the config (the content script guarantees
+    // it); everything after flows to the daemon verbatim.
+    if (msg && msg.type === 'dogsh-config') {
+      if (ws) return; // reconnect chatter; the socket already exists
+      daemonUrl = typeof msg.url === 'string' && msg.url ? msg.url : null;
+      openSocket();
+      return;
+    }
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg));
     }
@@ -53,6 +64,4 @@ chrome.runtime.onConnect.addListener((port) => {
     if (retryTimer) clearTimeout(retryTimer);
     if (ws) ws.close();
   });
-
-  openSocket();
 });

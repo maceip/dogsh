@@ -15,6 +15,7 @@ const options = {
     path.join(__dirname, 'src', 'content.ts'),
     path.join(__dirname, 'src', 'sw.ts'),
     path.join(__dirname, 'src', 'offscreen.ts'),
+    path.join(__dirname, 'src', 'options.ts'),
   ],
   bundle: true,
   outdir: dist,
@@ -26,8 +27,19 @@ const options = {
 
 function copyStatic() {
   const staticDir = path.join(__dirname, 'static');
+  const copyRecursive = (src, dst) => {
+    const st = fs.statSync(src);
+    if (st.isDirectory()) {
+      fs.mkdirSync(dst, { recursive: true });
+      for (const name of fs.readdirSync(src)) {
+        copyRecursive(path.join(src, name), path.join(dst, name));
+      }
+      return;
+    }
+    fs.copyFileSync(src, dst);
+  };
   for (const f of fs.readdirSync(staticDir)) {
-    fs.copyFileSync(path.join(staticDir, f), path.join(dist, f));
+    copyRecursive(path.join(staticDir, f), path.join(dist, f));
   }
   const fontsSrc = path.join(__dirname, '..', 'app', 'shared', 'fonts');
   const fontsDst = path.join(dist, 'fonts');

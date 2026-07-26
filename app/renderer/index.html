@@ -82,16 +82,51 @@
       }
       #term {
         padding: 8px 10px 10px 10px;
+        /* Fill the window below the dragbar: the fit addon derives the grid
+           from this box when the user resizes the window. */
+        box-sizing: border-box;
+        height: calc(100vh - 34px);
+      }
+      /* When another face owns, keep the window (tiled layout) but cover the
+         live grid so the terminal isn't shown in two places at once. */
+      #away {
+        display: none;
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 34px;
+        bottom: 0;
+        z-index: 5;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 8px;
+        background: #0d1117;
+        color: #9aa4af;
+        font: 500 13px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+        letter-spacing: 0.02em;
+        text-align: center;
+        padding: 24px;
+        cursor: pointer;
+      }
+      #away[data-on] {
+        display: flex;
+      }
+      #away strong {
+        color: #dfe6ee;
+        font-weight: 600;
       }
     </style>
   </head>
   <body>
     <div id="dragbar">dogsh<div id="tabs"></div></div>
     <div id="term"></div>
+    <div id="away"><strong>terminal is with you elsewhere</strong>this window stays put — click here to bring it back</div>
     <script src="../shared/config.js"></script>
     <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
     <script src="../node_modules/@xterm/addon-webgl/lib/addon-webgl.js"></script>
     <script src="../node_modules/@xterm/addon-web-links/lib/addon-web-links.js"></script>
+    <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
     <script src="./renderer.js"></script>
   </body>
 </html>

@@ -1,17 +1,22 @@
 // dogsh tab face. Pre-warmed, always-attached xterm.js overlay in a Shadow DOM.
 //
-// v6 role, exactly two jobs (see app/daemon/arbiter.ts for the design):
+// Exactly two jobs (see app/daemon/lease-engine.ts):
 //   REPORT FACTS — raw {visible, focused} signals from real events, never
 //   claims, never from timers, never in reaction to daemon broadcasts.
-//   RENDER STATE — reveal/hide/fly purely from daemon owner-state.
-// Everything this file must NOT do again lives in the arbiter's header: the
-// eviction race, steal-then-blur, and the self-heal metronome all came from
-// this script drawing conclusions instead of reporting facts.
+//   RENDER STATE — reveal/hide/fly purely from daemon leaseRole (v10).
 import { Terminal } from '@xterm/xterm';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { FitAddon } from '@xterm/addon-fit';
 import xtermCss from '@xterm/xterm/css/xterm.css';
 import CONFIG from '../../app/shared/config.js';
+import {
+  normalizeLeaseRole,
+  mayInput,
+  mayShow,
+  shouldGateTx,
+  type FaceLeaseRole,
+} from './face-lease.js';
 
 declare global {
   interface Window {
@@ -53,6 +58,11 @@ declare global {
   const host = document.createElement('div');
   host.setAttribute('data-dogsh', '');
   host.setAttribute('data-proto', String(CONFIG.protocolVersion));
+  host.setAttribute('data-flips', '0');
+  // Build version, straight from the installed manifest: lets tooling (and
+  // humans in devtools) confirm WHICH build of the extension a page is
+  // actually running — indispensable when redeploying to a phone.
+  host.setAttribute('data-version', chrome.runtime.getManifest().version);
   Object.assign(host.style, {
     position: 'fixed',
     zIndex: '2147483647',
@@ -77,7 +87,7 @@ declare global {
         box-shadow: 0 12px 48px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.10);
         overflow: hidden;
         transform-origin: 0 0;
-        opacity: 0.72; /* overridden inline by applyOpacity() */
+        opacity: 1; /* overridden inline by applyOpacity() */
         transition: opacity .15s ease;
         pointer-events: auto; /* host is pointer-events:none; frame re-enables */
       }
@@ -130,7 +140,22 @@ declare global {
         text-align: center; cursor: pointer;
       }
       #newtab:hover { background: rgba(255,255,255,.12); color: #dfe6ee; }
-      #term { padding: 8px 10px 10px 10px; }
+      /* border-box so the resize drag can set width/height equal to the
+         measured rect without the padding drifting the math. */
+      #term { padding: 8px 10px 10px 10px; box-sizing: border-box; }
+      /* Phones: never eat more than a third of the screen — same budget as
+         the cinematic overlay. Desktop keeps shrink-wrap-to-grid. */
+      @media (pointer: coarse) and (max-width: 820px) {
+        #frame {
+          width: 100%;
+          max-width: 100%;
+          border-radius: 10px 10px 0 0;
+        }
+        #term {
+          max-height: 16vh;
+          overflow: hidden;
+        }
+      }
       /* Context menu. Fixed 28px item height + 6px vertical padding — the e2e
          suite drives this menu by coordinates through the closed shadow root,
          so this geometry is part of the contract. */
@@ -159,6 +184,43 @@ declare global {
       #menu .mi:hover { background: rgba(88,166,255,.18); }
       #menu .mi[data-disabled] { opacity: .38; pointer-events: none; }
       #menu .sep { height: 1px; margin: 5px 0; background: rgba(255,255,255,.08); }
+      /* Resize grip, top-left corner (the frame is anchored bottom-right, so
+         it grows up-and-left). Kept to 12px so it never overlaps the red
+         light (which starts at x=12 inside the bar). */
+      #resizer {
+        position: absolute;
+        left: 0; top: 0;
+        width: 12px; height: 12px;
+        cursor: nwse-resize;
+        z-index: 5;
+        touch-action: none;
+      }
+      #resizer::after {
+        content: '';
+        position: absolute;
+        left: 3px; top: 3px;
+        width: 6px; height: 6px;
+        border-left: 2px solid rgba(255,255,255,.35);
+        border-top: 2px solid rgba(255,255,255,.35);
+        border-top-left-radius: 3px;
+      }
+      #resizer:hover::after { border-color: rgba(255,255,255,.7); }
+      /* Phone bottom-sheet: full-width top drag handle (finger-sized). */
+      :host([data-phone]) #resizer {
+        left: 0; right: 0; top: 0;
+        width: 100%; height: 28px;
+        cursor: ns-resize;
+      }
+      :host([data-phone]) #resizer::after {
+        left: 50%; top: 10px;
+        transform: translateX(-50%);
+        width: 44px; height: 4px;
+        border: none;
+        border-radius: 2px;
+        background: rgba(255,255,255,.4);
+      }
+      /* Minimized: no terminal, nothing to resize. */
+      :host([data-mode="min"]) #resizer { display: none; }
       /* Ghost: the terminal area is click-through so the page underneath
          stays usable, but the title bar (and its lights) MUST stay
          interactive — it's the only mouse path out of ghost mode.
@@ -172,13 +234,14 @@ declare global {
         <div id="lights">
           <span class="light red" id="l-red" title="Hide everywhere (Ctrl+Shift+\\ restores)"></span>
           <span class="light yellow" id="l-yellow" title="Minimize to title bar"></span>
-          <span class="light green" id="l-green" title="Toggle ghost (click-through terminal)"></span>
+          <span class="light green" id="l-green" title="Maximize / restore size"></span>
         </div>
         <span id="title">dogsh</span>
         <div id="tabs"></div>
       </div>
       <div id="term"></div>
       <div id="menu"></div>
+      <div id="resizer" title="Resize the terminal (owner drives the size everywhere)"></div>
     </div>
   `;
   const frame = shadow.getElementById('frame')!;
@@ -189,18 +252,25 @@ declare global {
   (document.body || document.documentElement).appendChild(host);
 
   // ---------------------------------------------------------------------
-  // Page-awareness: the overlay is translucent, and its three "traffic
-  // lights" let the user get it out of the way without leaving the page.
-  //   red    = dismiss the overlay on this tab
-  //   yellow = ghost mode (click-through + more transparent)
-  //   green  = solid & interactive
+  // Page-awareness: traffic lights get the overlay out of the way without
+  // leaving the page.
+  //   red    = dismiss everywhere
+  //   yellow = minimize to title bar
+  //   green  = maximize / restore (NOT ghost — ghost was a surprise opacity
+  //            toggle that felt like a broken maximize on mobile)
   // ---------------------------------------------------------------------
-  let opacity = 0.72; // see-through by default (60–80% range)
+  let opacity = 1; // solid by default — ghost mode is the see-through path
   let mode = 'normal'; // normal | ghost | min | off  (persisted, synced)
+  // Phone sheet height: default is tall enough for Cursor agent TUI; green
+  // toggles expanded; drag sets a custom px height (cleared by green).
+  let phoneExpanded = false;
+  let phoneCustomH: number | null = null;
+  const PHONE_H_FRAC = 0.42;
+  const PHONE_H_MAX_FRAC = 0.82;
 
   function applyOpacity(): void {
     // Inline on the frame so it reliably wins over stylesheet rules.
-    frame.style.opacity = String(mode === 'ghost' ? 0.4 : opacity);
+    frame.style.opacity = String(mode === 'ghost' ? 0.55 : opacity);
   }
 
   function setMode(next: string, { persist = true } = {}): void {
@@ -215,8 +285,8 @@ declare global {
     render();
   }
 
-  // Traffic lights: red = dismiss everywhere, yellow = minimize to bar,
-  // green = toggle ghost/normal (and un-minimize).
+  // Traffic lights: red = dismiss, yellow = minimize, green = maximize.
+  // Green handlers are wired after isCompactPhone / syncBoxToSession exist.
   shadow.getElementById('l-red')!.addEventListener('click', (e) => {
     e.stopPropagation();
     setMode('off');
@@ -224,10 +294,6 @@ declare global {
   shadow.getElementById('l-yellow')!.addEventListener('click', (e) => {
     e.stopPropagation();
     setMode(mode === 'min' ? 'normal' : 'min');
-  });
-  shadow.getElementById('l-green')!.addEventListener('click', (e) => {
-    e.stopPropagation();
-    setMode(mode === 'ghost' ? 'normal' : 'ghost');
   });
 
   // Keyboard escape hatch, works even when the overlay isn't focused:
@@ -266,6 +332,24 @@ declare global {
       if (/^https?:\/\//i.test(uri)) window.open(uri, '_blank', 'noopener');
     })
   );
+
+  // Dynamic grid: fit proposes {cols, rows} for the #term box while the user
+  // drags the resize grip. Clamps mirror the daemon's Session.resize()
+  // bounds so a proposal is never silently corrected server-side.
+  const fit = new FitAddon();
+  term.loadAddon(fit);
+  function fittedDims(): { cols: number; rows: number } | null {
+    try {
+      const d = fit.proposeDimensions();
+      if (!d || !Number.isFinite(d.cols) || !Number.isFinite(d.rows)) return null;
+      return {
+        cols: Math.max(20, Math.min(500, d.cols)),
+        rows: Math.max(5, Math.min(200, d.rows)),
+      };
+    } catch {
+      return null;
+    }
+  }
 
   function cellSize(): { w: number; h: number } | null {
     try {
@@ -419,6 +503,14 @@ declare global {
           extensionGone = true;
           return;
         }
+        // First message is always the hub config: which daemon this face
+        // talks to (empty url = local default). The hub consumes it and
+        // only then opens the socket — bridge-up follows.
+        try {
+          port.postMessage({ type: 'dogsh-config', url: daemonUrl || null });
+        } catch {
+          /* port died instantly; onDisconnect reconnects */
+        }
         port.onMessage.addListener(onBridgeMessage);
         port.onDisconnect.addListener(() => {
           port = null;
@@ -511,13 +603,16 @@ declare global {
           href: location.href,
           proto: CONFIG.protocolVersion,
           faceKey,
+          // Shared secret: ignored by a loopback daemon, demanded by one
+          // reached over the network (Edge Android -> laptop tailnet).
+          token: daemonToken || undefined,
           // Baseline levels ride in the hello: a DESCRIPTION of this tab as
           // it stands. The daemon trusts it as state, never as a user action
           // — a reconnect cannot win ownership with it.
           sig: sentBaseline,
-          // Fixed grid today; the dynamic-resize milestone starts computing
-          // this from the frame size. canResize flags that this face could.
-          caps: { cols: CONFIG.cols, rows: CONFIG.rows, canResize: false },
+          // Baseline grid: this face's CURRENT size (a reconnect must not
+          // move the session's grid); the resize grip updates it via caps.
+          caps: { cols: term.cols, rows: term.rows, canResize: true },
         });
         // If a REAL event fired while the bridge was down (user switched to
         // this tab mid-blip), deliver it now as one live signal — exactly
@@ -534,31 +629,58 @@ declare global {
         myId = msg.clientId;
         sessionId = msg.sessionId;
         if (typeof msg.gen === 'number') lastGen = msg.gen;
-        // If the daemon already considers this tab the owner (reattach after
-        // an extension reload mid-ownership), restore the overlay.
-        if (msg.owner === myId && !owned) reveal();
+        iAmRemote = !!msg.remote;
+        {
+          const role = normalizeLeaseRole(msg.leaseRole, {
+            owner: msg.owner,
+            myId,
+            remote: iAmRemote,
+          });
+          if (role === 'sole' && !owned) applyRole('sole');
+          else applyRole(role);
+        }
         break;
       case 'session-list':
         sessionId = msg.active; // every face displays the active session
         renderTabs(msg);
         break;
       case 'owner-state': {
-        // THE single source of display truth (v6): render it, never react to
-        // it with reports — a report triggered by a broadcast is a feedback
-        // loop, and one of those was the old self-heal metronome. Transitions
-        // involving the native window fly (prevOwner/nativeBounds); tab->tab
-        // cuts instantly so the "it never moved" illusion holds. The 2s
-        // re-assert repeats prevOwner === owner, so it can only correct a
-        // wrong DISPLAY, never replay a flight.
         if (!freshGen(msg)) break;
-        const iOwn = msg.owner === myId;
-        if (iOwn && !owned) {
-          if (msg.prevOwner === 'native') flyIn(msg.nativeBounds);
-          else reveal();
-        } else if (!iOwn && owned) {
-          if (msg.owner === 'native') flyOut(msg.nativeBounds);
-          else hideNow();
+        const role = normalizeLeaseRole(msg.leaseRole, {
+          owner: msg.owner,
+          myId,
+          remote: iAmRemote,
+        });
+        const becomingSole = role === 'sole' && !owned;
+        const leavingSole = owned && role !== 'sole';
+        applyRole(role, {
+          flyIn: becomingSole && msg.prevOwner === 'native' ? msg.nativeBounds : undefined,
+          flyOut: leavingSole && msg.owner === 'native' && role === 'mute' ? msg.nativeBounds : undefined,
+        });
+        break;
+      }
+      case 'host-fenced': {
+        // Hard mute: invalidate lease identity before redirect (no late unmute).
+        myId = null;
+        lastGen = -1;
+        if (anim) anim.cancel();
+        hideNow();
+        try {
+          port?.disconnect();
+        } catch {
+          /* already down */
         }
+        port = null;
+        bridgeUp = false;
+        if (typeof msg.redirectUrl === 'string' && msg.redirectUrl) {
+          daemonUrl = msg.redirectUrl;
+          try {
+            chrome.storage.local.set({ daemonUrl });
+          } catch {
+            /* extension gone */
+          }
+        }
+        if (alive) setTimeout(connect, 200);
         break;
       }
       case 'stale':
@@ -577,9 +699,7 @@ declare global {
         // The session may be running a different grid than this face's
         // default (another face owned it and resized); match before writing
         // or the snapshot wraps wrong.
-        if (msg.cols && msg.rows && (term.cols !== msg.cols || term.rows !== msg.rows)) {
-          term.resize(msg.cols, msg.rows);
-        }
+        applyGrid(msg.cols, msg.rows);
         term.reset();
         term.write(msg.data, () => {
           console.debug(
@@ -594,11 +714,7 @@ declare global {
         // Owner-drives-size: whoever owns the terminal set this grid; every
         // face follows so the buffers reflow identically everywhere and a
         // later handoff needs no resync.
-        if (msg.cols && msg.rows && (term.cols !== msg.cols || term.rows !== msg.rows)) {
-          term.resize(msg.cols, msg.rows);
-          repaint();
-          updateEvidence();
-        }
+        applyGrid(msg.cols, msg.rows);
         break;
       case 'data':
         term.write(msg.data, updateEvidence);
@@ -620,7 +736,10 @@ declare global {
     }
   }
 
-  term.onData((data) => post({ type: 'input', sessionId, data }));
+  term.onData((data) => {
+    if (!owned) return; // never mint/steal from a hidden face
+    post({ type: 'input', sessionId, data });
+  });
 
   // ---------------------------------------------------------------------
   // Editing: same commands as the native face (menu bar there, context menu
@@ -789,6 +908,16 @@ declare global {
   //     renderer, so a tab under another app's window still claims focus.
   //     DOM focus/blur refine it between pushes.
   // ---------------------------------------------------------------------
+  // ---------------------------------------------------------------------
+  // Lease model (v10): sole | mute | monitor from daemon — do not infer.
+  // Input only when sole; show when sole or monitor. Post-downlink TX gate
+  // suppresses echo until a trusted user event.
+  // ---------------------------------------------------------------------
+  let leaseRole: FaceLeaseRole = 'mute';
+  let owned = false; // sole (input authority) — kept for flip counter / onData
+  let txGated = false;
+  let iAmRemote = false;
+
   function currentSig(): { visible: boolean; focused: boolean } {
     return {
       visible: tabActive && document.visibilityState === 'visible',
@@ -797,12 +926,34 @@ declare global {
   }
   let signalPending = false; // a real event fired while the bridge was down
   function reportSignal(): void {
-    if (bridgeUp) post({ type: 'signal', ...currentSig() });
+    // Post-downlink TX gate: paint/focus echo from owner-state must not uplink.
+    if (txGated) return;
+    const sig = currentSig();
+    post({
+      type: 'trace',
+      tag: 'tab-signal',
+      detail: `v=${sig.visible} f=${sig.focused} tabActive=${tabActive} href=${location.href.slice(0, 60)}`,
+    });
+    if (bridgeUp) post({ type: 'signal', ...sig });
     else signalPending = true; // delivered once, right after reconnect
     updateRenderer();
     // Hidden tabs throttle rendering; never come back stale.
     if (document.visibilityState === 'visible') repaint();
   }
+  window.addEventListener(
+    'pointerdown',
+    (e) => {
+      if (e.isTrusted) clearTxGateFromTrusted();
+    },
+    true
+  );
+  window.addEventListener(
+    'keydown',
+    (e) => {
+      if (e.isTrusted) clearTxGateFromTrusted();
+    },
+    true
+  );
   window.addEventListener('focus', () => {
     windowFocused = true;
     reportSignal();
@@ -824,12 +975,17 @@ declare global {
     chrome.runtime.onMessage.addListener((msg) => {
       if (!msg) return;
       if (msg.type === 'dogsh-window-focused') {
+        // SW relay is near-end intent (OS focus), not downlink echo — clear
+        // the post-owner-state TX gate so tab/window switches can mint.
+        clearTxGateFromTrusted();
         windowFocused = true;
         reportSignal();
       } else if (msg.type === 'dogsh-window-blurred') {
+        clearTxGateFromTrusted();
         windowFocused = false;
         reportSignal();
       } else if (msg.type === 'dogsh-tab-active') {
+        clearTxGateFromTrusted();
         tabActive = !!msg.active;
         reportSignal();
       }
@@ -838,21 +994,38 @@ declare global {
     /* extension context torn down */
   }
 
-  // ---------------------------------------------------------------------
-  // Visibility model.
-  //   owned : does the daemon currently place the terminal in THIS tab
-  //   mode  : user's display preference, persisted + synced across tabs
-  //           'normal' interactive & translucent
-  //           'ghost'  click-through & more transparent
-  //           'min'    collapsed to the title bar (terminal hidden)
-  //           'off'    hidden everywhere until explicitly restored
-  // The overlay is visible only when (owned && mode !== 'off').
-  // Native<->tab handoffs fly (FLIP against the real window's screen rect);
-  // tab->tab stays instant so the "it never moved" illusion holds. Every fly
-  // path degrades to the instant reveal/hide if anything about the rect or
-  // the environment is unusable.
-  // ---------------------------------------------------------------------
-  let owned = false;
+  function applyRole(role: FaceLeaseRole, opts?: { flyIn?: DogshRect | null; flyOut?: DogshRect | null }): void {
+    const prev = leaseRole;
+    const wasSole = owned;
+    leaseRole = role;
+    owned = mayInput(role);
+    const show = mayShow(role);
+    if (shouldGateTx(prev, role)) txGated = true;
+    if (owned && !wasSole) {
+      noteFlip(true);
+      post({ type: 'trace', tag: 'reveal', detail: `role=${role} flips=${flipCount}` });
+      if (opts?.flyIn) flyIn(opts.flyIn);
+      else {
+        applyDock();
+        render();
+        requestAnimationFrame(() => proposeCompactCaps());
+      }
+    } else if (!show && wasSole) {
+      if (opts?.flyOut) flyOut(opts.flyOut);
+      else hideNow();
+    } else if (role === 'monitor' && wasSole) {
+      noteFlip(false);
+      post({ type: 'trace', tag: 'monitor', detail: `flips=${flipCount}` });
+      if (anim) anim.cancel();
+      render();
+    } else {
+      render();
+    }
+  }
+
+  function clearTxGateFromTrusted(): void {
+    txGated = false;
+  }
 
   // The daemon reports the native window in *screen* coordinates. Convert to
   // this tab's viewport, accounting for Chrome's window chrome (tab strip +
@@ -909,7 +1082,7 @@ declare global {
   }
 
   function flyIn(fromScreen: DogshRect | null | undefined): void {
-    reveal(); // instant reveal first: the fly is decoration on top of it
+    if (!owned) reveal();
     if (mode === 'off' || mode === 'min') return;
     const from = screenToViewport(fromScreen);
     if (!from || document.visibilityState !== 'visible') return;
@@ -962,9 +1135,10 @@ declare global {
   }
 
   function render(): void {
-    const show = owned && mode !== 'off';
+    const show = (leaseRole === 'sole' || leaseRole === 'monitor') && mode !== 'off';
     host.style.visibility = show ? 'visible' : 'hidden';
     host.setAttribute('data-mode', mode);
+    host.setAttribute('data-lease', leaseRole);
     applyOpacity();
     if (!show) {
       term.blur();
@@ -973,11 +1147,9 @@ declare global {
     applyDock();
     if (mode !== 'min') {
       updateRenderer();
-      term.focus();
-      repaint(); // never reveal a stale/black frame
-      // Again on the next frame: writes that landed while this tab was
-      // hidden/throttled may have been coalesced away; the post-visibility
-      // frame is the one the compositor actually shows.
+      if (owned) term.focus();
+      else term.blur();
+      repaint();
       requestAnimationFrame(() => repaint());
     }
     updateEvidence();
@@ -996,12 +1168,18 @@ declare global {
   function reveal(): void {
     noteFlip(true);
     owned = true;
+    leaseRole = 'sole';
+    post({ type: 'trace', tag: 'reveal', detail: `flips=${flipCount} href=${location.href.slice(0, 80)}` });
+    applyDock();
     render();
+    requestAnimationFrame(() => proposeCompactCaps());
   }
   function hideNow(): void {
     noteFlip(false);
     owned = false;
-    if (anim) anim.cancel(); // a hide always beats an in-flight fly
+    leaseRole = 'mute';
+    post({ type: 'trace', tag: 'hide', detail: `flips=${flipCount} href=${location.href.slice(0, 80)}` });
+    if (anim) anim.cancel();
     render();
   }
 
@@ -1011,28 +1189,136 @@ declare global {
   // ---------------------------------------------------------------------
   let dock = { right: 24, bottom: 24 };
   let portOverride = 0;
+  // Remote daemon settings (options page): a full ws(s) URL pointed at the
+  // laptop over the tailnet, plus the DOGSH_TOKEN it demands from
+  // non-loopback sockets. Empty = local daemon on the default port. This is
+  // what makes the SAME extension a laptop overlay on desktop Chrome and a
+  // phone overlay on Edge Android.
+  let daemonUrl = '';
+  let daemonToken = '';
+  let resizing = false;
+
+  function isCompactPhone(): boolean {
+    try {
+      return window.matchMedia('(pointer: coarse) and (max-width: 820px)').matches;
+    } catch {
+      return false;
+    }
+  }
+
+  // Phones: edge-to-edge bottom sheet. Default ~42vh so Cursor agent TUI is
+  // usable; green expands to ~82vh; drag sets a custom height. Never leave
+  // the xterm grid at a desktop size inside a short CSS box — that makes
+  // the agent footer swallow the whole sheet.
+  function applyCompactBox(): void {
+    if (!isCompactPhone() || resizing) return;
+    const frac = phoneExpanded ? PHONE_H_MAX_FRAC : PHONE_H_FRAC;
+    const maxH = Math.round(window.innerHeight * frac);
+    const h = phoneCustomH != null ? phoneCustomH : Math.max(120, maxH);
+    termEl.style.width = '100%';
+    termEl.style.height = `${Math.min(Math.round(window.innerHeight * 0.92), Math.max(96, h))}px`;
+  }
+
+  /** Fit the live xterm grid to the #term CSS box and push caps when sole. */
+  function syncBoxToSession(): void {
+    if (mode === 'min' || mode === 'off') return;
+    applyCompactBox();
+    // Let layout settle before measuring cells.
+    const run = () => {
+      const d = fittedDims();
+      if (!d) return;
+      if (term.cols !== d.cols || term.rows !== d.rows) {
+        term.resize(d.cols, d.rows);
+        repaint();
+        updateEvidence();
+      }
+      if (owned) {
+        post({ type: 'caps', caps: { cols: d.cols, rows: d.rows, canResize: true } });
+      }
+    };
+    requestAnimationFrame(run);
+  }
 
   function applyDock(): void {
+    if (isCompactPhone()) {
+      host.setAttribute('data-phone', '');
+      host.style.left = '0';
+      host.style.right = '0';
+      host.style.bottom = '0';
+      host.style.width = '100%';
+      applyCompactBox();
+      return;
+    }
+    host.removeAttribute('data-phone');
+    host.style.left = 'auto';
+    host.style.width = '';
     host.style.right = `${dock.right}px`;
     host.style.bottom = `${dock.bottom}px`;
   }
 
+  function proposeCompactCaps(): void {
+    if (!isCompactPhone() || resizing) return;
+    syncBoxToSession();
+  }
+
+  // Green = maximize / restore (wired here so it can call syncBoxToSession).
+  shadow.getElementById('l-green')!.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (mode === 'min') setMode('normal');
+    if (mode === 'ghost') setMode('normal'); // escape accidental ghost
+    if (isCompactPhone()) {
+      phoneCustomH = null;
+      phoneExpanded = !phoneExpanded;
+      applyDock();
+      if (owned) syncBoxToSession();
+      return;
+    }
+    phoneExpanded = !phoneExpanded;
+    if (phoneExpanded) {
+      const w = Math.min(920, Math.round(window.innerWidth * 0.72));
+      const h = Math.min(640, Math.round(window.innerHeight * 0.7));
+      termEl.style.width = `${w}px`;
+      termEl.style.height = `${h}px`;
+    } else {
+      termEl.style.width = '';
+      termEl.style.height = '';
+    }
+    if (owned) syncBoxToSession();
+  });
+
   function loadSettings(done: () => void): void {
     applyOpacity();
     try {
-      chrome.storage.local.get(['dock', 'webgl', 'mode', 'opacity', 'portOverride'], (res) => {
-        void chrome.runtime.lastError;
-        if (res && Number(res.portOverride)) portOverride = Number(res.portOverride);
-        if (res && res.dock) {
-          dock = res.dock as typeof dock;
+      chrome.storage.local.get(
+        ['dock', 'webgl', 'mode', 'opacity', 'portOverride', 'daemonUrl', 'daemonToken'],
+        (res) => {
+          void chrome.runtime.lastError;
+          if (res && Number(res.portOverride)) portOverride = Number(res.portOverride);
+          if (res && typeof res.daemonUrl === 'string') daemonUrl = res.daemonUrl.trim();
+          if (res && typeof res.daemonToken === 'string') daemonToken = res.daemonToken;
+          if (res && res.dock) {
+            dock = res.dock as typeof dock;
+          }
           applyDock();
+          if (res && typeof res.opacity === 'number') {
+            // Migrate older translucent defaults to solid; any other stored
+            // value was an intentional user choice.
+            const legacy = res.opacity === 0.72 || res.opacity === 0.88 || res.opacity === 0.94;
+            opacity = legacy ? 1 : res.opacity;
+            if (legacy) {
+              try {
+                chrome.storage.local.set({ opacity: 1 });
+              } catch {
+                /* extension gone */
+              }
+            }
+          }
+          if (res && typeof res.mode === 'string') mode = res.mode;
+          webglOptIn = !!(res && res.webgl);
+          render();
+          done();
         }
-        if (res && typeof res.opacity === 'number') opacity = res.opacity;
-        if (res && typeof res.mode === 'string') mode = res.mode;
-        webglOptIn = !!(res && res.webgl);
-        render();
-        done();
-      });
+      );
       chrome.storage.onChanged.addListener((changes) => {
         if (changes.mode && typeof changes.mode.newValue === 'string') {
           setMode(changes.mode.newValue, { persist: false });
@@ -1048,6 +1334,22 @@ declare global {
         if (changes.webgl) {
           webglOptIn = !!changes.webgl.newValue;
           updateRenderer();
+        }
+        if (changes.daemonUrl || changes.daemonToken) {
+          // New endpoint or secret (options page): tear the bridge down and
+          // rebuild it against the new settings. disconnect() does not fire
+          // our own onDisconnect, so the reconnect is scheduled here.
+          if (changes.daemonUrl) daemonUrl = String(changes.daemonUrl.newValue || '').trim();
+          if (changes.daemonToken) daemonToken = String(changes.daemonToken.newValue || '');
+          try {
+            port?.disconnect();
+          } catch {
+            /* already down */
+          }
+          port = null;
+          bridgeUp = false;
+          hideNow();
+          if (alive) setTimeout(connect, 200);
         }
       });
     } catch {
@@ -1082,7 +1384,112 @@ declare global {
     bar.addEventListener('pointerup', onUp);
   });
 
+  // ---------------------------------------------------------------------
+  // Drag-resize (top-left grip; the frame is anchored bottom-right). While
+  // dragging, #term gets an explicit pixel box and fit proposes a grid from
+  // it; changed proposals go out as caps reports (throttled). The daemon
+  // resizes the session only for the OWNER face — which this face is
+  // whenever its grip is grabbable — and the authoritative grid broadcast
+  // is what actually resizes the terminal (applyGrid), same as every other
+  // face. When the drag settles the explicit box is dropped and the frame
+  // shrink-wraps the final grid, so tab-to-tab identity holds everywhere.
+  // ---------------------------------------------------------------------
+  const resizer = shadow.getElementById('resizer')!;
+
+  function applyGrid(cols?: number, rows?: number): void {
+    if (cols && rows && (term.cols !== cols || term.rows !== rows)) {
+      term.resize(cols, rows);
+      repaint();
+      updateEvidence();
+    }
+    if (!resizing) {
+      if (isCompactPhone()) {
+        // Keep the sheet box. If we own, immediately refit the grid to the
+        // box and push caps — otherwise a desktop-sized snapshot/grid leaves
+        // the agent TUI painting into the wrong geometry (footer blowout).
+        applyCompactBox();
+        if (owned) requestAnimationFrame(() => syncBoxToSession());
+      } else if (!phoneExpanded) {
+        // Back to shrink-wrapping the grid (drag may have left an explicit box).
+        // Keep an explicit box while desktop-maximized.
+        termEl.style.width = '';
+        termEl.style.height = '';
+      }
+    }
+  }
+
+  resizer.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizer.setPointerCapture(e.pointerId);
+    resizing = true;
+    const startRect = termEl.getBoundingClientRect();
+    const start = { x: e.clientX, y: e.clientY, w: startRect.width, h: startRect.height };
+    let capsTimer: ReturnType<typeof setTimeout> | null = null;
+    const report = () => {
+      capsTimer = null;
+      const d = fittedDims();
+      if (!d) return;
+      // Optimistic local resize so the agent TUI reflows with the box before
+      // the daemon's grid echo arrives (avoids footer-fills-the-sheet lag).
+      if (term.cols !== d.cols || term.rows !== d.rows) {
+        term.resize(d.cols, d.rows);
+        repaint();
+        updateEvidence();
+      }
+      if (owned) {
+        post({ type: 'caps', caps: { cols: d.cols, rows: d.rows, canResize: true } });
+      }
+    };
+    const onMove = (ev: PointerEvent) => {
+      if (isCompactPhone()) {
+        // Bottom sheet: drag the top handle to change height.
+        const h = Math.max(96, Math.min(window.innerHeight * 0.92, start.h + (start.y - ev.clientY)));
+        phoneCustomH = h;
+        phoneExpanded = false;
+        termEl.style.width = '100%';
+        termEl.style.height = `${h}px`;
+      } else {
+        const w = Math.max(240, start.w + (start.x - ev.clientX));
+        const h = Math.max(90, start.h + (start.y - ev.clientY));
+        termEl.style.width = `${w}px`;
+        termEl.style.height = `${h}px`;
+        phoneExpanded = false; // custom drag overrides green maximize
+      }
+      if (capsTimer == null) capsTimer = setTimeout(report, 90);
+    };
+    const onUp = () => {
+      resizer.removeEventListener('pointermove', onMove);
+      resizer.removeEventListener('pointerup', onUp);
+      resizing = false;
+      if (capsTimer != null) clearTimeout(capsTimer);
+      report(); // final proposal for the settled size
+      // Phone keeps the explicit sheet height. Desktop: if the grid already
+      // matches, shrink-wrap; otherwise wait for the daemon grid echo.
+      if (!isCompactPhone()) {
+        const d = fittedDims();
+        if (!d || (d.cols === term.cols && d.rows === term.rows)) applyGrid();
+      }
+      term.focus();
+    };
+    resizer.addEventListener('pointermove', onMove);
+    resizer.addEventListener('pointerup', onUp);
+  });
+
   // Settings first, then connect — renderer choice must be known before the
   // first reveal.
+  window.addEventListener('resize', () => {
+    applyDock();
+    if (owned) syncBoxToSession();
+  });
+  try {
+    window.visualViewport?.addEventListener('resize', () => {
+      if (!isCompactPhone()) return;
+      applyDock();
+      if (owned) syncBoxToSession();
+    });
+  } catch {
+    /* no visualViewport */
+  }
   loadSettings(connect);
 })();

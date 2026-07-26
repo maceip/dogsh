@@ -1,0 +1,88 @@
+# Build macOS debug app + Chrome extension (unpacked) + Edge Android Canary crx.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  macos-build:
+    name: macOS app + extensions
+    runs-on: macos-14 # arm64
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            app/package-lock.json
+            extension/package-lock.json
+
+      # --- native Electron (debug .app, darwin only) -----------------------
+      - name: Install app deps
+        working-directory: app
+        run: npm ci
+
+      - name: Typecheck + compile app
+        working-directory: app
+        run: npm run build
+
+      - name: Arbiter sim (no glass)
+        working-directory: app
+        run: npm run sim
+
+      - name: Package macOS debug .app
+        working-directory: app
+        run: npm run package:mac
+
+      - name: Zip macOS app
+        run: |
+          ARCH=$(node -p "process.arch==='arm64'?'arm64':'x64'")
+          APP="app/build/dogsh-darwin-${ARCH}/dogsh.app"
+          test -d "$APP"
+          ditto -c -k --keepParent "$APP" "dogsh-macos-${ARCH}-debug.zip"
+          echo "APP_ARCH=$ARCH" >> "$GITHUB_ENV"
+
+      # --- Chrome extension (unpacked dist/) ------------------------------
+      - name: Install extension deps
+        working-directory: extension
+        run: npm ci
+
+      - name: Build Chrome extension (unpacked)
+        working-directory: extension
+        run: npm run build
+
+      - name: Assert extension dist
+        run: |
+          test -f extension/dist/manifest.json
+          test -f extension/dist/content.js
+          test -f extension/dist/sw.js
+
+      # --- Edge Android Canary (.crx) -------------------------------------
+      # pack.js mints build/dogsh.pem if absent (CI identity ≠ local release id).
+      - name: Pack Edge Canary extension (.crx)
+        working-directory: extension
+        run: npm run pack
+
+      - name: Assert crx
+        run: |
+          test -f extension/build/dogsh.crx
+          test -f extension/build/dogsh.pem
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dogsh-macos-build
+          path: |
+            dogsh-macos-${{ env.APP_ARCH }}-debug.zip
+            extension/dist/**
+            extension/build/dogsh.crx
+          if-no-files-found: error

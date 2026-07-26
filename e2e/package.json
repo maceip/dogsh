@@ -2,7 +2,7 @@
   "name": "dogsh-e2e",
   "version": "0.1.0",
   "private": true,
-  "description": "Records the handoff illusion in Chromium with the extension loaded",
+  "description": "Singular glass e2e: Chrome for Testing + Edge Canary + native dogsh follow",
   "scripts": {
     "test": "node run.js"
   },

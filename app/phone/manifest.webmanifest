@@ -1,0 +1,11 @@
+{
+  "name": "dogsh",
+  "short_name": "dogsh",
+  "description": "the terminal that follows you — phone face",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "icons": [{ "src": "/icon.png", "sizes": "1024x1024", "type": "image/png" }]
+}

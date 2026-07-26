@@ -31,6 +31,7 @@
     "preload-island.ts",
     "daemon/**/*.ts",
     "renderer/**/*.ts",
+    "phone/**/*.ts",
     "shared/**/*.ts",
     "types/**/*.d.ts"
   ]

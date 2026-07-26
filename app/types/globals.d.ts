@@ -4,17 +4,20 @@
 import type * as XTerm from '@xterm/xterm';
 import type * as XTermWebgl from '@xterm/addon-webgl';
 import type * as XTermWebLinks from '@xterm/addon-web-links';
+import type * as XTermFit from '@xterm/addon-fit';
 
 declare global {
   // <script src="../node_modules/@xterm/xterm/lib/xterm.js"> etc.
   const Terminal: typeof XTerm.Terminal;
   const WebglAddon: typeof XTermWebgl;
   const WebLinksAddon: typeof XTermWebLinks;
+  const FitAddon: typeof XTermFit;
 
   // preload.ts (native face window)
   interface DogshBridge {
     onReveal(cb: () => void): void;
     onEdit(cb: (cmd: string) => void): void;
+    onUserResize(cb: () => void): void;
     contextMenu(opts: { hasSelection: boolean }): Promise<string | null>;
     clipboardWrite(text: string): void;
     clipboardRead(): Promise<string>;

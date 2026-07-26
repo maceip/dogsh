@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>dogsh settings</title>
+    <link rel="icon" href="icons/icon32.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body {
+        margin: 0;
+        padding: 28px 24px;
+        background: #0d1117;
+        color: #b1bac4;
+        font: 500 14px -apple-system, Roboto, sans-serif;
+        max-width: 560px;
+      }
+      h1 {
+        font-size: 16px;
+        color: #dfe6ee;
+        margin: 0 0 4px;
+      }
+      p.hint {
+        color: #6e7681;
+        font-size: 12px;
+        line-height: 1.5;
+        margin: 4px 0 18px;
+      }
+      label {
+        display: block;
+        margin: 14px 0 6px;
+        color: #9aa4af;
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: #10161d;
+        color: #dfe6ee;
+        font: 500 13px monospace;
+      }
+      button {
+        margin-top: 20px;
+        padding: 10px 26px;
+        border: none;
+        border-radius: 8px;
+        background: rgba(88, 166, 255, 0.3);
+        color: #dfe6ee;
+        font: 600 14px -apple-system, Roboto, sans-serif;
+        cursor: pointer;
+      }
+      #saved {
+        margin-left: 12px;
+        color: #3fb950;
+        opacity: 0;
+        transition: opacity 0.3s;
+      }
+      #saved[data-on] {
+        opacity: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>dogsh — daemon connection</h1>
+    <p class="hint">
+      Leave both empty to use the local daemon (ws://127.0.0.1:47703) — the normal desktop setup.
+      To follow a laptop from this device (Edge on Android over a tailnet), point the URL at the
+      laptop's daemon and paste its DOGSH_TOKEN.
+    </p>
+    <label for="url">daemon url</label>
+    <input id="url" type="text" placeholder="wss://mac.your-tailnet.ts.net:47703" autocomplete="off" />
+    <label for="token">token (DOGSH_TOKEN)</label>
+    <input id="token" type="password" placeholder="only needed for a remote daemon" autocomplete="off" />
+    <button id="save">save</button><span id="saved">saved — faces reconnect on their own</span>
+    <script src="options.js"></script>
+  </body>
+</html>

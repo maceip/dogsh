@@ -3,15 +3,25 @@ dist/
 *.log
 .DS_Store
 
+# editor / agent local state
+.cursor/
+
 # generated outputs
 app/build/
 e2e/artifacts/
+dogsh-macos-*-debug.zip
+
 
 # tsc emit (sources are the sibling .ts files; shared/config.js stays JS on
 # purpose — script-tag + require + esbuild consumers — and IS tracked)
 app/main.js
 app/preload.js
 app/preload-island.js
+app/host-uplink-mute.js
 app/daemon/*.js
 app/renderer/renderer.js
+app/phone/phone.js
 tsconfig.tsbuildinfo
+
+# packed extension + its PRIVATE SIGNING KEY (never commit the .pem)
+extension/build/

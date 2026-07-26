@@ -6,15 +6,20 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && node build.js",
-    "watch": "node build.js --watch"
+    "watch": "node build.js --watch",
+    "pack": "tsc --noEmit && node build.js && node pack.js",
+    "serve": "node serve.js",
+    "deploy-phone": "node deploy-phone.js"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/addon-webgl": "^0.18.0",
     "@xterm/xterm": "^5.5.0"
   },
   "devDependencies": {
     "@types/chrome": "^0.2.2",
+    "crx3": "^2.0.0",
     "esbuild": "^0.23.0",
     "typescript": "^7.0.2"
   }

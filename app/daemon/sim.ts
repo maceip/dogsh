@@ -17,15 +17,17 @@
 // Invariants (checked after EVERY event):
 //   I1  owner is 'native' or a currently-connected client id
 //   I2  doghouse            => owner === 'native'
-//   I3  host focused level  => owner === 'native'
+//   I3  host focused level  => owner === 'native', OR (v8) a REMOTE face
+//       that is engaged with a strictly newer engagement seq than the host
 //   I4  no input => no movement: repeated derivation without any report
 //       never changes the owner (the metronome is impossible, proven, not
 //       hoped)
-//   convergence: once the noise settles, the terminal is where the user is.
+//   convergence: once the noise settles, the terminal is where the user is
+//       — including on the phone, which coexists with a focused laptop.
 //
 // Run: npm run sim   (pure logic, no sockets, no pty — a full fuzz run takes
 // well under a second)
-import { Arbiter } from './arbiter.js';
+import { LeaseEngine as Arbiter, GHOST_GRACE_MS } from './lease-engine.js';
 
 let failures = 0;
 function check(name: string, ok: boolean, note?: string): void {
@@ -112,6 +114,72 @@ function scripted(): void {
       'bug3 metronome: owner fixed without input',
       arb.owner === before && arb.generation === genBefore
     );
+  }
+  // --- duplicate engaged→engaged must NOT remint / steal (flicker_again) --
+  // Chrome SW re-pushes, OS focus storms, and agent window storms used
+  // to remint on every identical signal and ping-pong A↔B↔phone.
+  {
+    const { arb, grants } = makeArbiter();
+    arb.attachHost({ visible: true, focused: false });
+    arb.attachTab(1, 'A');
+    arb.attachTab(2, 'B');
+    arb.signalTab(1, { visible: true, focused: true }); // A owns
+    grants.length = 0;
+    for (let i = 0; i < 50; i++) {
+      arb.signalTab(1, { visible: true, focused: true }); // duplicate
+      arb.signalTab(2, { visible: false, focused: false }); // idle B spam
+    }
+    check(
+      'dup-signal: no steal from identical engaged reports',
+      arb.owner === 1 && grants.length === 0,
+      `owner=${arb.owner} grants=${grants.length}`
+    );
+    // Rising edge on B still steals once.
+    arb.signalTab(1, { visible: false, focused: false });
+    arb.signalTab(2, { visible: true, focused: true });
+    check('dup-signal: rising edge on B still takes ownership', arb.owner === 2, `owner=${arb.owner}`);
+  }
+  // --- owner-only input: non-owner keystrokes cannot ping-pong ownership ---
+  {
+    const { arb, grants } = makeArbiter();
+    arb.attachHost({ visible: true, focused: false });
+    arb.attachTab(1, 'A');
+    arb.attachTab(2, 'B');
+    arb.signalTab(1, { visible: true, focused: true }); // A owns
+    arb.signalTab(2, { visible: true, focused: true }); // B owns via signal (instant)
+    grants.length = 0;
+    // Alternating keystrokes from both — only the owner may mint; no steal,
+    // no hold delay. Signal path above already proved grants stay instant.
+    arb.noteInput(1);
+    arb.noteInput(2);
+    arb.noteInput(1);
+    check(
+      'owner-only-input: keystroke storm cannot ping-pong',
+      arb.owner === 2 && grants.length === 0,
+      `owner=${arb.owner} grants=${grants.length}`
+    );
+    // Real tab switch still moves ownership immediately (no hold).
+    // Rising edge required — a duplicate engaged signal is a no-op by design.
+    arb.signalTab(1, { visible: true, focused: false });
+    arb.signalTab(1, { visible: true, focused: true });
+    check('owner-only-input: focus signal still steals instantly', arb.owner === 1, `owner=${arb.owner}`);
+  }
+  // --- native keystrokes while not owner must NOT steal (demo regression) --
+  {
+    const { arb, grants } = makeArbiter();
+    arb.attachHost({ visible: true, focused: false });
+    arb.attachTab(1, 'A');
+    arb.signalTab(1, { visible: true, focused: true }); // A owns
+    grants.length = 0;
+    arb.noteInput('native'); // spurious keys in visible-but-quiet native window
+    check(
+      'input-host-ignored: non-owner host cannot steal via keystrokes',
+      arb.owner === 1 && grants.length === 0,
+      `owner=${arb.owner} grants=${grants.length}`
+    );
+    // Real reclaim: focus signal (instant — no grant hold).
+    arb.signalHost({ visible: true, focused: true });
+    check('input-host-ignored: focus signal reclaims native', arb.owner === 'native', `owner=${arb.owner}`);
   }
   // --- host-gone handback (scenario 8 class) -----------------------------
   {
@@ -225,7 +293,150 @@ function scripted(): void {
     arb.signalTab(2, { visible: true, focused: true }); // visibilitychange: shown
     check('tab switch: B owns', arb.owner === 2);
   }
-  pass('scripted replays (13 scenarios)');
+
+  // ------------------------------------------------------------------ v8 —
+  // --- phone pickup: remote engagement outranks an IDLE focused host ------
+  // The user walks away from a focused laptop window and unlocks the phone.
+  // No laptop event will ever fire (nothing blurred); the phone's live
+  // engagement must win anyway. This is the scenario rule 2 (v7) made
+  // impossible by construction — the whole reason v8 exists.
+  {
+    const { arb } = makeArbiter();
+    arb.attachHost({ visible: true, focused: true });
+    arb.signalHost({ visible: true, focused: true }); // launch focus: host mints
+    arb.attachTab(1, 'P', { visible: true, focused: true }, true); // phone, baseline
+    check('pickup: engaged baseline cannot steal from a focused host', arb.owner === 'native');
+    arb.signalTab(1, { visible: true, focused: true }); // unlock: LIVE engagement
+    check('pickup: live remote engagement outranks idle-focused host', arb.owner === 1, `owner=${arb.owner}`);
+  }
+  // --- laptop reclaim via focus event -------------------------------------
+  // Phone owns; the user sits back down and clicks/cmd-tabs to the window.
+  // The OS focus event is live: the host mints and outranks the phone.
+  {
+    const { arb } = makeArbiter();
+    arb.attachHost({ visible: true, focused: false });
+    arb.attachTab(1, 'P', undefined, true);
+    arb.signalTab(1, { visible: true, focused: true });
+    check('reclaim setup: phone owns', arb.owner === 1);
+    arb.signalHost({ visible: true, focused: true }); // real focus event
+    check('reclaim: host focus event brings the terminal home', arb.owner === 'native');
+  }
+  // --- reclaim is signal-driven (owner-only input cannot steal) -----------
+  // Phone took the terminal while the window stayed OS-focused; the user
+  // returns. Focus/visibility is the reclaim path — typing alone must not
+  // yank, or desktop faces steal from each other via ghost keystrokes.
+  {
+    const { arb } = makeArbiter();
+    arb.attachHost({ visible: true, focused: true });
+    arb.signalHost({ visible: true, focused: true });
+    arb.attachTab(1, 'P', undefined, true);
+    arb.signalTab(1, { visible: true, focused: true }); // pickup
+    check('signal-reclaim setup: phone owns', arb.owner === 1);
+    arb.noteInput('native'); // host still focused in ledger but not owner — ignored
+    check('signal-reclaim: typing alone does not yank from phone', arb.owner === 1);
+    arb.signalHost({ visible: true, focused: true }); // rising-edge / remint via live report
+    // Host was already focused: anti-metronome may not remint. Force blur+focus.
+    arb.signalHost({ visible: true, focused: false });
+    arb.signalHost({ visible: true, focused: true });
+    check('signal-reclaim: host focus edge brings terminal home', arb.owner === 'native');
+    arb.signalTab(1, { visible: true, focused: false });
+    arb.signalTab(1, { visible: true, focused: true });
+    check('signal-reclaim: phone engagement takes it back', arb.owner === 1);
+  }
+  // --- input from non-owner cannot re-prove a stale remote ----------------
+  {
+    const { arb } = makeArbiter();
+    arb.attachHost({ visible: true, focused: false });
+    arb.attachTab(1, 'P', undefined, true);
+    arb.signalTab(1, { visible: true, focused: true });
+    arb.signalTab(1, { visible: false, focused: false }); // screen locked
+    check('stale-phone setup: terminal parked (hysteresis)', arb.owner === 1);
+    arb.attachTab(2, 'A');
+    arb.signalTab(2, { visible: true, focused: true }); // user visits a tab
+    check('stale-phone: laptop tab takes over', arb.owner === 2);
+    arb.noteInput(1); // phone types while not owner — ignored
+    check('stale-phone: non-owner input cannot reclaim', arb.owner === 2, `owner=${arb.owner}`);
+    arb.signalTab(1, { visible: true, focused: true }); // real engagement
+    check('stale-phone: live signal reclaims instantly', arb.owner === 1, `owner=${arb.owner}`);
+  }
+  // --- input from a LOCAL tab still cannot beat a focused host ------------
+  // (One keyboard: if the host is focused, "input from a local tab" is a
+  // confused or malicious face, exactly the bug2 class. Exclusivity holds.)
+  {
+    const { arb } = makeArbiter();
+    arb.attachHost({ visible: true, focused: true });
+    arb.signalHost({ visible: true, focused: true });
+    arb.attachTab(1, 'A');
+    arb.noteInput(1);
+    check('local-input: focused host still holds against local tab input', arb.owner === 'native');
+  }
+  // --- doghouse pins against the phone too (I2) ---------------------------
+  {
+    const h = makeArbiter();
+    const { arb } = h;
+    arb.attachHost({ visible: true, focused: false });
+    arb.attachTab(1, 'P', undefined, true);
+    arb.setDoghouse(true);
+    arb.signalTab(1, { visible: true, focused: true });
+    check('doghouse vs phone: owner pinned native', arb.owner === 'native');
+    check('doghouse vs phone: bark fired', h.barks === 1, `barks=${h.barks}`);
+  }
+  // --- two remote faces: newest engagement wins under a focused host ------
+  {
+    const { arb } = makeArbiter();
+    arb.attachHost({ visible: true, focused: true });
+    arb.signalHost({ visible: true, focused: true });
+    arb.attachTab(1, 'P1', undefined, true);
+    arb.attachTab(2, 'P2', undefined, true);
+    arb.signalTab(1, { visible: true, focused: true });
+    arb.signalTab(2, { visible: true, focused: true });
+    check('two phones: newest remote engagement owns', arb.owner === 2, `owner=${arb.owner}`);
+  }
+  // --- howl suite: fabricated dual-input / quiet flap / reassert spam -----
+  {
+    const { arb, grants } = makeArbiter();
+    arb.resetHowl();
+    arb.attachHost({ visible: true, focused: false });
+    arb.attachTab(1, 'A');
+    arb.attachTab(2, 'B');
+    arb.signalTab(1, { visible: true, focused: true });
+    grants.length = 0;
+    arb.resetHowl();
+    for (let i = 0; i < 50; i++) {
+      arb.noteInput(1);
+      arb.noteInput(2);
+    }
+    check('howl: dual fabricated input grants=0', arb.howl.grants === 0 && grants.length === 0);
+    check('howl: non-owner drops counted', arb.howl.mintRejectedNotOwner > 0);
+  }
+  {
+    const { arb, grants } = makeArbiter();
+    arb.attachHost({ visible: true, focused: false });
+    arb.attachTab(1, 'A');
+    arb.signalTab(1, { visible: true, focused: true });
+    grants.length = 0;
+    arb.resetHowl();
+    // Focus flap while tab owns — without rising edge on host (already false),
+    // duplicate host focus reports must not grant.
+    for (let i = 0; i < 30; i++) {
+      arb.signalHost({ visible: true, focused: false });
+    }
+    check('howl: focus flap under tab-owner grants=0', grants.length === 0 && arb.owner === 1);
+  }
+  {
+    const { arb } = makeArbiter();
+    arb.attachHost({ visible: true, focused: false });
+    arb.attachTab(1, 'A');
+    arb.signalTab(1, { visible: true, focused: true });
+    const gen = arb.generation;
+    arb.resetHowl();
+    // Duplicate engaged signals (reassert spam): must not remint / grant.
+    for (let i = 0; i < 100; i++) {
+      arb.signalTab(1, { visible: true, focused: true });
+    }
+    check('howl: reassert-equivalent churn grants=0', arb.howl.grants === 0 && arb.generation === gen);
+  }
+  pass('scripted replays (13 v6/v7 + 7 v8 scenarios + howl)');
 }
 
 // ---------------------------------------------------------------------------
@@ -249,6 +460,10 @@ function fuzz(seed: number, events: number): string | null {
   const h = makeArbiter();
   const { arb } = h;
   const KEYS = ['A', 'B', 'C'];
+  // The phone: a REMOTE face on its own device. Its engagement coexists
+  // with host focus (nothing on the laptop blurs when it's picked up).
+  const PHONE = 'P';
+  const isRemote = (key: string): boolean => key === PHONE;
   // faceKey -> live clientId (undefined = not connected)
   const live = new Map<string, number>();
   let nextId = 1;
@@ -269,32 +484,53 @@ function fuzz(seed: number, events: number): string | null {
   //  - host focus/blur are OS events: always reported, always truthful
   //  - a tab the user is ON reports truthfully (visible tabs don't lie)
   //  - tabs the user is NOT on may hold stale levels or lie in baselines
+  //  - the PHONE is on another device: moving to/from it never touches
+  //    host levels; its own departure report (screen lock) is often LATE
+  //  - input comes only from where the user really is (fabricated input is
+  //    the accepted bug2 trust boundary, not modeled noise)
   const userMovesTo = (dest: string | 'native'): void => {
     t(`move ${String(user)} -> ${String(dest)}`);
     // Leaving the old place. Chrome tabs miss their disengage report 20% of
-    // the time (the missed-blur specialty); the host never does.
-    if (user === 'native' && hostAttached && dest !== 'native') {
+    // the time (the missed-blur specialty); the phone's screen lock is late
+    // 40% of the time; the host never misses.
+    if (user === 'native' && hostAttached && dest !== 'native' && !isRemote(dest as string)) {
+      // Chrome taking OS focus on the SAME machine blurs the host: reliable.
       hostFocused = false;
       arb.signalHost({ visible: true, focused: false });
     } else if (user !== 'away' && user !== 'native') {
       const id = clientOf(user);
-      if (id != null && rnd() > 0.2) {
+      const missRate = isRemote(user) ? 0.4 : 0.2;
+      if (id != null && rnd() > missRate) {
         arb.signalTab(id, { visible: false, focused: dest !== 'native' && rnd() < 0.5 });
       }
     }
     if (dest === 'native') {
-      hostFocused = true;
       user = 'native';
-      arb.signalHost({ visible: true, focused: true });
-    } else {
       if (hostFocused) {
+        // Window stayed focused while user was on a remote face — no OS
+        // focus event will fire. Force a focus edge so reclaim is instant
+        // (owner-only input must not steal; signals do).
+        arb.signalHost({ visible: true, focused: false });
+        arb.signalHost({ visible: true, focused: true });
+      } else {
+        hostFocused = true;
+        arb.signalHost({ visible: true, focused: true });
+      }
+    } else {
+      if (hostFocused && !isRemote(dest)) {
         // Chrome taking OS focus means the host blurred: reliable.
         hostFocused = false;
         arb.signalHost({ visible: true, focused: false });
       }
       user = dest;
       const id = clientOf(dest);
-      if (id != null) arb.signalTab(id, { visible: true, focused: true });
+      if (id != null) {
+        // Rising-edge mint: if the face was already stale-engaged, a plain
+        // engaged signal is a no-op under anti-metronome — dip then rise so
+        // arrival always remints instantly (no input-steal, no grant hold).
+        arb.signalTab(id, { visible: true, focused: false });
+        arb.signalTab(id, { visible: true, focused: true });
+      }
     }
   };
 
@@ -313,7 +549,23 @@ function fuzz(seed: number, events: number): string | null {
     }
     if (arb.doghouse && owner !== 'native') return `I2 broken @${step}`;
     if (hostAttached && hostFocused && owner !== 'native') {
-      return `I3 broken @${step}: owner=${owner} while host focused`;
+      // v8: a focused host yields only to a REMOTE row engaged with a
+      // strictly newer seq — read straight from the arbiter's own ledger.
+      const ledger = arb.debugLedger() as {
+        host: { engagedSeq: number } | null;
+        tabs: Array<{
+          clientId: number;
+          engagedSeq: number;
+          remote: boolean;
+          visible: boolean;
+          focused: boolean;
+        }>;
+      };
+      const row = ledger.tabs.find((r) => r.clientId === owner);
+      const hostSeq = ledger.host ? ledger.host.engagedSeq : 0;
+      if (!row || !row.remote || !(row.engagedSeq > hostSeq)) {
+        return `I3 broken @${step}: owner=${owner} while host focused (row=${JSON.stringify(row)}, hostSeq=${hostSeq})`;
+      }
     }
     return null;
   };
@@ -325,10 +577,16 @@ function fuzz(seed: number, events: number): string | null {
     const r = rnd();
     if (r < 0.08) {
       hostAttached = true;
-      hostFocused = rnd() < 0.4;
+      // Baselines are truthful (the host reads real window state): if the
+      // user is AT the window it is focused, full stop. Otherwise it can
+      // attach focused only when nobody LOCAL holds OS focus (one machine,
+      // one focus) — the user being on the phone or away doesn't conflict.
+      // Attaching does not move the user: a baseline describes the window,
+      // not their attention.
+      hostFocused =
+        user === 'native' || (rnd() < 0.4 && (user === 'away' || isRemote(user)));
       t(`attach-host f=${hostFocused}`);
       arb.attachHost({ visible: true, focused: hostFocused });
-      if (hostFocused) user = 'native';
     } else if (r < 0.13) {
       if (hostAttached) {
         hostAttached = false;
@@ -338,9 +596,13 @@ function fuzz(seed: number, events: number): string | null {
         if (user === 'native') user = 'away';
       }
     } else if (r < 0.25) {
-      // (re)attach a tab face. Baseline: truthful if it's where the user is
-      // (a genuinely visible tab reports real levels), possibly lying if not.
-      const key = KEYS[Math.floor(rnd() * KEYS.length)];
+      // (re)attach a tab face — sometimes the phone. Baseline: truthful if
+      // it's where the user is, possibly lying if not. A page the user is
+      // actually LOOKING AT emits real load/focus events right after
+      // attach (pageshow, the hasFocus-gated check), so a truthful attach
+      // is followed by a live engaged signal.
+      const pool = rnd() < 0.25 ? [PHONE] : KEYS;
+      const key = pool[Math.floor(rnd() * pool.length)];
       if (!live.has(key)) {
         const id = ++nextId;
         live.set(key, id);
@@ -349,9 +611,10 @@ function fuzz(seed: number, events: number): string | null {
           ? { visible: true, focused: true }
           : { visible: rnd() < 0.4, focused: rnd() < 0.4 };
         t(`attach ${key}#${id} v=${sig.visible} f=${sig.focused}${truthful ? ' (truthful)' : ''}`);
-        arb.attachTab(id, key, sig);
+        arb.attachTab(id, key, sig, isRemote(key));
         // Reattach consumed a pending ghost for this key, if any.
         h.ghosts = h.ghosts.filter((k) => k !== key);
+        if (truthful) arb.signalTab(id, { visible: true, focused: true });
       }
     } else if (r < 0.33) {
       // a tab face's socket drops: real close (tab gone) or bridge blip
@@ -395,13 +658,25 @@ function fuzz(seed: number, events: number): string | null {
         const keys = [...live.keys()];
         if (keys.length) userMovesTo(keys[Math.floor(rnd() * keys.length)]);
       }
-    } else if (r < 0.88) {
+    } else if (r < 0.82) {
       // NOISE that must never move the terminal: disengaged-level reports
       // from faces the user is not on (blur corrections, visibility flips).
       const keys = [...live.keys()].filter((k) => k !== user);
       if (keys.length) {
         const key = keys[Math.floor(rnd() * keys.length)];
         arb.signalTab(live.get(key)!, { visible: rnd() < 0.3, focused: false });
+      }
+    } else if (r < 0.88) {
+      // THE USER TYPES where they already own (owner-only mint refreshes
+      // engagement; cannot steal). Fabricated input from elsewhere is not
+      // modeled — non-owner input is ignored by the arbiter.
+      if (user === 'native' && hostAttached) {
+        t('input native');
+        hostFocused = true;
+        arb.noteInput('native');
+      } else if (user !== 'away' && user !== 'native' && live.has(user)) {
+        t(`input ${user}`);
+        arb.noteInput(live.get(user)!);
       }
     } else {
       // Quiescence probe (I4): repeated derivation with zero input.
@@ -418,7 +693,9 @@ function fuzz(seed: number, events: number): string | null {
 
   // Convergence oracle: settle the world (expire pending ghosts), then — if
   // the user is genuinely somewhere attached and not doghoused — the
-  // terminal must be with them.
+  // terminal must be with them. The phone case rides the same check: a
+  // user genuinely ON the phone always out-minted the host (their move
+  // there was a live signal or input), focused laptop window or not.
   for (const key of h.ghosts.splice(0)) arb.expireGhost(key);
   if (!arb.doghouse) {
     if (user === 'native' && hostAttached && hostFocused && arb.owner !== 'native') {

@@ -1,22 +1,30 @@
-// The face/host <-> daemon wire protocol (v6), typed once for every consumer:
-// the daemon, the Electron host (main.ts), the native renderer (script-tag
-// world), and the extension content script. Ambient on purpose — script-kind
-// files (renderer.ts, island.ts) cannot use module imports, and types are
-// erased anyway, so globals cost nothing.
+// The face/host <-> daemon wire protocol (v10), typed once for every consumer.
+// Ambient on purpose — script-kind files cannot use module imports.
 //
-// v6 is the level-based ownership protocol (see daemon/arbiter.ts):
-//   facts in — clients report raw {visible, focused} signals, never claims;
-//   state out — the daemon broadcasts derived owner-state, faces render it.
-// Gone from the wire: focus/blur claims, reveal/hide commands, claim reasons.
+// v6: level-based lease (signals in, owner-state out).
+// v7: dynamic grid. v8: remote faces. v9: relocatable Session Host.
+// v10: leaseRole sole|mute|monitor + cause on owner-state (AEC / echo cancel).
 //
 // Fields on INCOMING messages are optional wherever the receiving code
-// runtime-guards them: this is untrusted JSON off a socket, and the types
-// describe what a well-behaved peer sends, not what parse can prove.
+// runtime-guards them.
 
 type DogshSurface = 'native' | 'tab' | 'native-host';
 
 // 'native' or a tab client id.
 type DogshOwner = 'native' | number;
+
+/** Face display/input role derived by the Session Host (v10). */
+type DogshLeaseRole = 'sole' | 'mute' | 'monitor';
+
+/** Why the lease moved or was re-asserted (AEC reference / post-mortem). */
+type DogshLeaseCause =
+  | 'signal'
+  | 'input'
+  | 'attach'
+  | 'expire-ghost'
+  | 'reassert'
+  | 'import'
+  | 'doghouse';
 
 interface DogshRect {
   x: number;
@@ -25,15 +33,11 @@ interface DogshRect {
   height: number;
 }
 
-// Raw visibility facts a client reports about itself. For tabs: page
-// visibility + OS-level window focus (service-worker informed). For the
-// host: window shown + window focused.
 interface DogshSig {
   visible?: boolean;
   focused?: boolean;
 }
 
-// What grid a face can render; feeds owner-drives-size resizing.
 interface DogshCaps {
   cols: number;
   rows: number;
@@ -52,9 +56,36 @@ interface DogshSessionListMsg {
   max: number;
 }
 
-// ---------------------------------------------------------------------------
-// Client (face or host) -> daemon
-// ---------------------------------------------------------------------------
+interface DogshSessionHostBundle {
+  v: 1;
+  hostGeneration: number;
+  activeSessionId: number | null;
+  sessions: Array<{
+    id: number;
+    state: {
+      v: 1;
+      savedAt: number;
+      cols: number;
+      rows: number;
+      title: string;
+      data: string;
+    };
+  }>;
+  guestCheckpoints: Record<
+    string,
+    {
+      v: 1;
+      kind: 'guest';
+      savedAt: number;
+      cols: number;
+      rows: number;
+      title: string;
+      mirror: string;
+      payload: string;
+    }
+  >;
+}
+
 type DogshClientMsg =
   | {
       type: 'hello';
@@ -62,13 +93,9 @@ type DogshClientMsg =
       proto?: number;
       href?: string;
       caps?: Partial<DogshCaps>;
-      // Durable face identity: random per-page key. The arbiter's ledger is
-      // keyed by it, so a face that reconnects (MV3 bridge blip) is the SAME
-      // face and keeps its place — including ownership.
       faceKey?: string;
-      // Baseline levels at attach — a description of the present, never an
-      // action (it cannot win an ownership recency contest).
       sig?: DogshSig;
+      token?: string;
     }
   | { type: 'input'; sessionId?: number | null; data: string }
   | { type: 'clear'; sessionId?: number | null }
@@ -76,22 +103,16 @@ type DogshClientMsg =
   | { type: 'session-create' }
   | { type: 'session-switch'; sessionId?: number }
   | { type: 'session-close'; sessionId?: number }
-  // Live signal report — event-backed by protocol: sent only from real
-  // arrival/departure events (visibilitychange, window focus/blur, pageshow,
-  // SW focus push, host window events), never from timers and never in
-  // reaction to daemon broadcasts. The arbiter trusts live engaged reports
-  // as "the user is here NOW".
   | { type: 'signal'; visible?: boolean; focused?: boolean }
-  | { type: 'native-bounds'; bounds?: DogshRect } // native-host only
-  | { type: 'measure'; w: number; h: number } //     native face only
-  | { type: 'doghouse'; on?: boolean } //            native-host only
-  | { type: 'debug'; action?: string };
+  | { type: 'native-bounds'; bounds?: DogshRect }
+  | { type: 'measure'; w: number; h: number }
+  | { type: 'doghouse'; on?: boolean }
+  | { type: 'debug'; action?: string }
+  | { type: 'trace'; tag?: string; detail?: string }
+  | { type: 'host-export' }
+  | { type: 'host-fence'; redirectUrl?: string }
+  | { type: 'host-import'; bundle?: DogshSessionHostBundle };
 
-// ---------------------------------------------------------------------------
-// Daemon -> client. One union serves both audiences: faces and the host both
-// render themselves from owner-state; the host additionally gets window
-// choreography (bark, set-content-size, doghouse-changed).
-// ---------------------------------------------------------------------------
 type DogshDaemonMsg =
   | {
       type: 'hello-ack';
@@ -100,6 +121,12 @@ type DogshDaemonMsg =
       owner: DogshOwner;
       gen: number;
       doghouse?: boolean;
+      remote?: boolean;
+      hostGeneration?: number;
+      redirectUrl?: string | null;
+      fenced?: boolean;
+      /** This face's display/input role (v10). */
+      leaseRole?: DogshLeaseRole;
     }
   | DogshSessionListMsg
   | { type: 'snapshot'; sessionId: number; data: string; cols: number; rows: number }
@@ -107,11 +134,6 @@ type DogshDaemonMsg =
   | { type: 'grid'; sessionId: number; cols: number; rows: number }
   | { type: 'clear'; sessionId?: number }
   | { type: 'session-exit'; sessionId: number; exitCode: number }
-  // The single source of display truth. Pushed to every client on each
-  // ownership change (with prevOwner + nativeBounds so faces can decide
-  // between a flight and an instant cut) and re-asserted on a 2s tick
-  // (prevOwner === owner; a lost push costs one tick of latency, not a
-  // stranded overlay).
   | {
       type: 'owner-state';
       owner: DogshOwner;
@@ -119,13 +141,30 @@ type DogshDaemonMsg =
       prevOwner?: DogshOwner;
       doghouse?: boolean;
       nativeBounds?: DogshRect | null;
+      /** Per-recipient role — daemon sends per-socket (v10). */
+      leaseRole?: DogshLeaseRole;
+      /** Why this state was pushed (AEC reference). */
+      cause?: DogshLeaseCause;
     }
   | { type: 'stale'; expected: number; got: number }
   | { type: 'bark' }
   | { type: 'set-content-size'; w: number; h: number }
   | { type: 'doghouse-changed'; on: boolean }
-  | { type: 'debug-state'; [k: string]: unknown };
+  | { type: 'debug-state'; [k: string]: unknown }
+  | {
+      type: 'host-bundle';
+      bundle: DogshSessionHostBundle;
+      hostGeneration: number;
+    }
+  | {
+      type: 'host-fenced';
+      hostGeneration: number;
+      redirectUrl?: string | null;
+    }
+  | {
+      type: 'host-imported';
+      hostGeneration: number;
+      activeSessionId: number | null;
+    };
 
-// What the extension content script receives: daemon traffic plus the
-// offscreen document's own connectivity signals.
 type DogshBridgeMsg = DogshDaemonMsg | { type: 'bridge-up' } | { type: 'bridge-down' };

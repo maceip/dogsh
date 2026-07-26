@@ -8,7 +8,18 @@ const DOGSH_CONFIG = {
   // (never claims); the daemon derives the owner and broadcasts owner-state;
   // faces render themselves from it (reveal/hide commands are gone). Faces
   // carry a durable faceKey so reconnects keep their ledger row.
-  protocolVersion: 6,
+  // v7: dynamic grid. Faces report fitted caps from real user resizes
+  // (window drag on native, corner grip on tabs); the owner's caps drive
+  // the session grid; non-owners get a settle snapshot after a burst.
+  // v8: remote faces (the phone). hello carries a token when the socket
+  // comes from beyond loopback; input mints engagement; a remote face with
+  // a strictly newer engagement can outrank a focused host (arbiter v8).
+  // v9: relocatable Session Host — hostGeneration fencing, session bundle
+  // export/import, host-fenced redirect for faces, pluggable shell backend.
+  // v10: leaseRole sole|mute|monitor + cause on owner-state (echo cancel).
+  protocolVersion: 10,
+  // cols/rows below are the DEFAULT grid (first boot, fallback); live grids
+  // are owner-driven at runtime.
   // Handoff flight (native->tab fly-in, tab->native fly-out), milliseconds.
   flyMs: 280,
   // Interaction behavior shared by every face, so muscle memory transfers

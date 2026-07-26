@@ -1,0 +1,223 @@
+<!doctype html>
+<!-- dogsh phone face: served BY THE DAEMON (see daemon/serve.ts) so a phone
+     on the tailnet needs one URL and zero installs. Add-to-home-screen makes
+     it a standalone PWA. Same config, same theme, same protocol as every
+     other face — the terminal follows you off the laptop entirely. -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>dogsh</title>
+    <!-- interactive-widget: the soft keyboard RESIZES the layout viewport
+         instead of occluding it — the terminal shrinks, never hides. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <meta name="theme-color" content="#0d1117" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.png" />
+    <link rel="apple-touch-icon" href="/icon.png" />
+    <link rel="stylesheet" href="/vendor/xterm.css" />
+    <style>
+      @font-face {
+        font-family: 'MesloLGS NF';
+        src: url('/fonts/MesloLGS-NF-Regular.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'MesloLGS NF';
+        src: url('/fonts/MesloLGS-NF-Bold.ttf') format('truetype');
+        font-weight: bold;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #0d1117;
+        overflow: hidden;
+        overscroll-behavior: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      /* App column pinned to the VISUAL viewport (phone.js keeps --vvh in
+         sync): header, terminal, key bar. */
+      #app {
+        display: flex;
+        flex-direction: column;
+        height: var(--vvh, 100dvh);
+      }
+      #bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 34px;
+        padding: 0 10px;
+        background: linear-gradient(#20262e, #171c22);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        color: #9aa4af;
+        font: 600 12px -apple-system, Roboto, sans-serif;
+        letter-spacing: 0.04em;
+        flex: none;
+      }
+      #status {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #6e7681; /* grey: connecting, green: attached, gold: owner */
+        flex: none;
+      }
+      #tabs {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        margin-left: auto;
+      }
+      .tab {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        height: 22px;
+        padding: 0 9px;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.06);
+        color: #9aa4af;
+        font: 600 11px -apple-system, Roboto, sans-serif;
+        max-width: 110px;
+      }
+      .tab[data-active] {
+        background: rgba(88, 166, 255, 0.22);
+        color: #dfe6ee;
+      }
+      .tab .label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #termwrap {
+        position: relative;
+        flex: 1;
+        min-height: 0;
+      }
+      #term {
+        position: absolute;
+        inset: 0;
+        padding: 6px 8px;
+        box-sizing: border-box;
+      }
+      /* Not-the-owner veil: the stream still renders live underneath; one
+         tap is a real user gesture that summons the terminal here. */
+      #veil {
+        position: absolute;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(13, 17, 23, 0.72);
+        backdrop-filter: blur(1.5px);
+        z-index: 5;
+      }
+      #veil[data-on] {
+        display: flex;
+      }
+      #veil .pill {
+        padding: 10px 18px;
+        border-radius: 999px;
+        border: 1px solid rgba(88, 166, 255, 0.45);
+        background: #10161d;
+        color: #dfe6ee;
+        font: 600 13px -apple-system, Roboto, sans-serif;
+      }
+      #keybar {
+        display: flex;
+        gap: 6px;
+        padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+        background: #10161d;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        flex: none;
+      }
+      #keybar button {
+        flex: 1;
+        height: 34px;
+        border: none;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.07);
+        color: #b1bac4;
+        font: 600 12px -apple-system, Roboto, sans-serif;
+      }
+      #keybar button:active {
+        background: rgba(88, 166, 255, 0.3);
+      }
+      #keybar button[data-armed] {
+        background: rgba(88, 166, 255, 0.35);
+        color: #dfe6ee;
+      }
+      /* Token gate: shown until the daemon accepts a hello. */
+      #gate {
+        position: fixed;
+        inset: 0;
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        background: #0d1117;
+        color: #9aa4af;
+        font: 500 14px -apple-system, Roboto, sans-serif;
+        z-index: 10;
+        padding: 24px;
+        text-align: center;
+      }
+      #gate[data-on] {
+        display: flex;
+      }
+      #gate input {
+        width: min(320px, 80vw);
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: #10161d;
+        color: #dfe6ee;
+        font: 500 14px monospace;
+      }
+      #gate button {
+        padding: 10px 26px;
+        border: none;
+        border-radius: 8px;
+        background: rgba(88, 166, 255, 0.3);
+        color: #dfe6ee;
+        font: 600 14px -apple-system, Roboto, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="bar">
+        <div id="status"></div>
+        <span id="title">dogsh</span>
+        <div id="tabs"></div>
+      </div>
+      <div id="termwrap">
+        <div id="term"></div>
+        <div id="veil"><div class="pill">terminal is elsewhere — tap to summon</div></div>
+      </div>
+      <div id="keybar">
+        <button id="k-esc">esc</button>
+        <button id="k-tab">tab</button>
+        <button id="k-ctrl">ctrl</button>
+        <button id="k-up">&#9650;</button>
+        <button id="k-down">&#9660;</button>
+        <button id="k-left">&#9664;</button>
+        <button id="k-right">&#9654;</button>
+      </div>
+    </div>
+    <div id="gate">
+      <div>dogsh needs the daemon token<br />(DOGSH_TOKEN on the laptop)</div>
+      <input id="token" type="password" placeholder="token" autocomplete="off" />
+      <button id="go">connect</button>
+      <div id="gate-err" style="color: #ff7b72"></div>
+    </div>
+    <script src="/config.js"></script>
+    <script src="/vendor/xterm.js"></script>
+    <script src="/vendor/addon-fit.js"></script>
+    <script src="/phone.js"></script>
+  </body>
+</html>
