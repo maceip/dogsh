@@ -48,7 +48,7 @@
         min-height: 100dvh;
         color: var(--ink);
         font-family: "IBM Plex Mono", ui-monospace, monospace;
-        font-size: 15px;
+        font-size: 18px;
         line-height: 1.55;
         background: var(--bg0);
         overflow-x: hidden;
@@ -143,7 +143,7 @@
       .brand-float__label {
         display: none;
         font-family: "Instrument Serif", Georgia, serif;
-        font-size: 1.15rem;
+        font-size: 1.38rem;
         letter-spacing: -0.02em;
         color: var(--ink);
         white-space: nowrap;
@@ -180,7 +180,7 @@
         margin: 0;
         font-family: "Instrument Serif", Georgia, serif;
         font-weight: 400;
-        font-size: clamp(2.6rem, 11vw, 4.75rem);
+        font-size: clamp(3.12rem, 13.2vw, 5.7rem);
         letter-spacing: -0.03em;
         line-height: 0.95;
         text-shadow: 0 2px 24px rgba(0, 0, 0, 0.65);
@@ -190,7 +190,7 @@
         margin: 0;
         max-width: 36rem;
         color: var(--muted);
-        font-size: clamp(13px, 3.4vw, 14px);
+        font-size: clamp(15.6px, 4.08vw, 16.8px);
         text-shadow: 0 1px 12px rgba(0, 0, 0, 0.8);
       }
 
@@ -200,7 +200,7 @@
         justify-content: center;
         gap: 10px 16px;
         margin: 18px 0 28px;
-        font-size: 11px;
+        font-size: 13.2px;
         text-transform: uppercase;
         letter-spacing: 0.08em;
       }
@@ -238,7 +238,7 @@
 
       .demo figcaption {
         padding: 12px 14px;
-        font-size: 12px;
+        font-size: 14.4px;
         color: var(--muted);
         border-top: 1px solid var(--line);
         background: rgba(0, 0, 0, 0.72);
@@ -257,7 +257,7 @@
       section h2 {
         margin: 0 0 14px;
         font-family: "Instrument Serif", Georgia, serif;
-        font-size: clamp(1.6rem, 5.5vw, 2.4rem);
+        font-size: clamp(1.92rem, 6.6vw, 2.88rem);
         font-weight: 400;
         letter-spacing: -0.02em;
       }
@@ -274,7 +274,7 @@
       }
 
       .lede {
-        font-size: clamp(14px, 3.6vw, 16px);
+        font-size: clamp(16.8px, 4.32vw, 19.2px);
         color: var(--ink);
         max-width: 40rem;
       }
@@ -294,7 +294,7 @@
 
       .tile h3 {
         margin: 0 0 8px;
-        font-size: 12px;
+        font-size: 14.4px;
         font-weight: 600;
         letter-spacing: 0.04em;
         text-transform: uppercase;
@@ -303,10 +303,9 @@
 
       .tile p {
         margin: 0;
-        font-size: 13px;
+        font-size: 15.6px;
       }
 
-      pre.arch,
       pre.shell {
         margin: 14px 0 0;
         padding: 14px;
@@ -315,21 +314,129 @@
         border: 1px solid var(--line);
         border-radius: 12px;
         background: #08090b;
-        font-size: 12px;
+        font-size: 14.4px;
         line-height: 1.45;
         max-width: 100%;
-      }
-
-      pre.arch {
-        color: #cfd6c2;
       }
 
       pre.shell {
         color: #d7e0c8;
       }
 
-      .arch .hi {
+      .arch-flow {
+        margin-top: 18px;
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #08090b;
+      }
+
+      .arch-flow__label {
+        margin: 0 0 10px;
+        color: var(--muted);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-align: center;
+        text-transform: uppercase;
+      }
+
+      .arch-flow__endpoints {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 8px;
+      }
+
+      .arch-flow__endpoint {
+        padding: 7px 10px;
+        border: 1px solid rgba(196, 240, 66, 0.28);
+        border-radius: 999px;
+        background: var(--accent-dim);
+        color: var(--ink);
+        font-size: 13.2px;
+      }
+
+      .arch-flow__link {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        min-height: 48px;
+        color: var(--muted);
+        font-size: 12px;
+        text-align: center;
+      }
+
+      .arch-flow__link b {
         color: var(--accent);
+        font-size: 21.6px;
+        font-weight: 400;
+        letter-spacing: 0.16em;
+      }
+
+      .arch-flow__host,
+      .arch-flow__runtime {
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: rgba(0, 0, 0, 0.35);
+      }
+
+      .arch-flow__host > strong,
+      .arch-flow__runtime > strong {
+        display: block;
+        margin-bottom: 12px;
+        color: var(--accent);
+        font-size: 13.2px;
+        letter-spacing: 0.06em;
+        text-align: center;
+        text-transform: uppercase;
+      }
+
+      .arch-flow__stages {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr auto 1fr;
+        align-items: stretch;
+        gap: 10px;
+      }
+
+      .arch-flow__stage {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 4px;
+        min-width: 0;
+        padding: 12px;
+        border-radius: 9px;
+        background: rgba(232, 228, 218, 0.055);
+        color: var(--ink);
+        font-size: 14.4px;
+        text-align: center;
+      }
+
+      .arch-flow__stage small {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      .arch-flow__step {
+        align-self: center;
+        color: var(--accent);
+      }
+
+      .arch-flow__runtime-row {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .arch-flow__state {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 12px;
+        text-align: center;
       }
 
       ul.plain {
@@ -359,7 +466,7 @@
         border: 1px solid var(--line);
         background: var(--accent-dim);
         color: var(--accent);
-        font-size: 11px;
+        font-size: 13.2px;
         letter-spacing: 0.06em;
         text-transform: uppercase;
       }
@@ -378,7 +485,7 @@
         padding: 18px 4px calc(8px + var(--safe-bottom));
         border-top: 1px solid var(--line);
         color: var(--muted);
-        font-size: 12px;
+        font-size: 14.4px;
         display: flex;
         flex-wrap: wrap;
         gap: 12px 24px;
@@ -392,7 +499,7 @@
       /* —— Phone (narrow) —— */
       @media (max-width: 640px) {
         body {
-          font-size: 14px;
+          font-size: 16.8px;
         }
 
         .nav {
@@ -423,10 +530,29 @@
           border-radius: 14px;
         }
 
-        pre.arch,
         pre.shell {
-          font-size: 11px;
+          font-size: 13.2px;
           padding: 12px;
+        }
+
+        .arch-flow {
+          padding: 14px;
+        }
+
+        .arch-flow__stages {
+          grid-template-columns: 1fr;
+        }
+
+        .arch-flow__step {
+          transform: rotate(90deg);
+        }
+
+        .arch-flow__runtime-row {
+          grid-template-columns: 1fr;
+        }
+
+        .arch-flow__runtime-row .arch-flow__step {
+          transform: rotate(90deg);
         }
       }
 
@@ -512,7 +638,7 @@
         }
 
         .brand h1 {
-          font-size: 2rem;
+          font-size: 2.4rem;
         }
 
         .brand p {
@@ -633,53 +759,110 @@ cd extension && npm run pack   # → build/dogsh.crx</pre>
           <section id="architecture">
             <h2>Architecture</h2>
             <p class="lede">
-              The daemon owns the PTY and terminal state. Apps and tabs connect over
-              WebSocket; one central lease controls input and resize.
+              The target is instant follow: one shell should appear on whatever
+              screen is in front of you — laptop, phone, browser, Raspberry Pi,
+              cloud VM, or fridge — without starting another shell. Every endpoint
+              uses the same WebSocket protocol; the Session Host keeps the process
+              and decides who owns input.
             </p>
-            <pre class="arch">
-<span class="hi">Clients</span>       macOS app · Chrome / Edge tabs · optional network PWA
-   │          hello · visibility / focus · owner-only input
-   ▼
-<span class="hi">Gateway</span>       WebSocket · 16 ms signal coalescing · slow-client resync
-   ▼
-<span class="hi">Lease engine</span>  engagement order → sole | mute | monitor
-   ▼
-<span class="hi">Session mux</span>   active session · export / fence / import · generation
-   ▼
-<span class="hi">PTY + xterm</span>   live process · snapshots · backpressure
-   ▼
-<span class="hi">State</span>         atomic files under ~/.dogsh/state
-</pre>
+            <div
+              class="arch-flow"
+              role="img"
+              aria-label="Any network endpoint connects over WebSocket to the dogsh Session Host. Its gateway feeds a lease engine and session multiplexer, which control one PTY and a headless xterm mirror."
+            >
+              <p class="arch-flow__label">Any endpoint running a dogsh client</p>
+              <div class="arch-flow__endpoints">
+                <span class="arch-flow__endpoint">macOS app</span>
+                <span class="arch-flow__endpoint">browser tab</span>
+                <span class="arch-flow__endpoint">phone</span>
+                <span class="arch-flow__endpoint">Raspberry Pi</span>
+                <span class="arch-flow__endpoint">cloud VM</span>
+                <span class="arch-flow__endpoint">fridge browser</span>
+              </div>
+
+              <div class="arch-flow__link">
+                <span>focus · visibility · input</span>
+                <b aria-hidden="true">↓ ↑</b>
+                <span>owner state · grid · terminal deltas</span>
+              </div>
+
+              <div class="arch-flow__host">
+                <strong>dogshd · Session Host</strong>
+                <div class="arch-flow__stages">
+                  <div class="arch-flow__stage">
+                    WebSocket gateway
+                    <small>token auth · signal coalescing · slow-client resync</small>
+                  </div>
+                  <span class="arch-flow__step" aria-hidden="true">→</span>
+                  <div class="arch-flow__stage">
+                    Lease engine
+                    <small>visibility + focus + engagement order</small>
+                  </div>
+                  <span class="arch-flow__step" aria-hidden="true">→</span>
+                  <div class="arch-flow__stage">
+                    Session mux
+                    <small>owner · grid · export / fence / import</small>
+                  </div>
+                </div>
+              </div>
+
+              <div class="arch-flow__link">
+                <span>owner-only input</span>
+                <b aria-hidden="true">↓ ↑</b>
+                <span>PTY output with backpressure</span>
+              </div>
+
+              <div class="arch-flow__runtime">
+                <strong>Shell runtime</strong>
+                <div class="arch-flow__runtime-row">
+                  <div class="arch-flow__stage">
+                    node-pty
+                    <small>the running shell process</small>
+                  </div>
+                  <span class="arch-flow__step" aria-hidden="true">↔</span>
+                  <div class="arch-flow__stage">
+                    headless xterm
+                    <small>scrollback · colors · cursor · alternate screen</small>
+                  </div>
+                </div>
+                <div class="arch-flow__state">
+                  Atomic session files under <code>~/.dogsh/state</code>
+                </div>
+              </div>
+            </div>
             <div class="grid cols-2" style="margin-top: 18px">
+              <div class="tile">
+                <h3>Fast follow</h3>
+                <p>
+                  Clients stay connected and keep warm terminal state. A focus
+                  change moves the input lease; there is no shell restart, terminal
+                  rebuild, or network reconnect during a same-host handoff.
+                </p>
+              </div>
               <div class="tile">
                 <h3>No echo storms</h3>
                 <p>
-                  Focus and visibility are level reports, not claims. Duplicates are
-                  dropped, bursts coalesced, and only the owner’s input reaches the
-                  PTY.
+                  Focus and visibility are level reports, not ownership claims. The
+                  gateway collapses browser noise into one update per 16 ms, drops
+                  duplicates, and allows only the current owner to write or resize.
                 </p>
               </div>
               <div class="tile">
-                <h3>Fenced handoff</h3>
+                <h3>Host-to-host handoff</h3>
                 <p>
-                  Local switches update the lease. Host transfers export a snapshot,
-                  fence the old generation, import on the new host, then reconnect
-                  clients.
+                  Transfer is export → fence → import. The old host stops accepting
+                  input before the new generation takes over; clients follow the
+                  redirect and resync from a snapshot. This moves authority and
+                  terminal state, not a live macOS PTY process.
                 </p>
               </div>
               <div class="tile">
-                <h3>Bounded output</h3>
+                <h3>Slow links stay local</h3>
                 <p>
-                  The PTY mirror pauses at its high-water mark. Slow clients stop
-                  receiving deltas, get a fresh snapshot when they recover, and are
-                  dropped if stuck.
-                </p>
-              </div>
-              <div class="tile">
-                <h3>Serialized state</h3>
-                <p>
-                  Headless xterm snapshots include scrollback, colors, cursor,
-                  alternate screen, and grid; atomic saves survive daemon restarts.
+                  A lagging phone or remote screen cannot stall the others. It stops
+                  receiving deltas, gets a fresh snapshot after recovery, and is
+                  disconnected if it remains stuck; PTY high/low watermarks bound
+                  the host’s own output queue.
                 </p>
               </div>
             </div>
