@@ -6,7 +6,7 @@
     <title>dogsh — a terminal that follows you</title>
     <meta
       name="description"
-      content="dogsh is a continuity terminal: one real pty session across a native macOS app, Chrome tabs, and Edge Canary on Android."
+      content="dogsh is a continuity terminal: one PTY session across a native macOS app, Chrome tabs, and Edge Canary on Android."
     />
     <link rel="icon" href="dogsh.png" type="image/png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -106,7 +106,7 @@
         margin-bottom: 22px;
       }
 
-      /* Invisible slot — real mark is the floating twin that morphs on scroll */
+      /* Invisible slot — the displayed mark is the floating twin that morphs on scroll */
       .brand__slot {
         width: clamp(88px, 22vw, 128px);
         height: clamp(88px, 22vw, 128px);
@@ -687,7 +687,7 @@
             <div class="brand__slot" id="brandSlot" aria-hidden="true"></div>
             <h1>dogsh</h1>
             <p>
-              One real shell session across the macOS app, Chrome tabs, and
+              One shell session across the macOS app, Chrome tabs, and
               experimental Edge Canary on Android.
             </p>
             <span class="status">A UX Experiment by @maceip</span>
@@ -726,7 +726,7 @@
                 <h3>1 · Native</h3>
                 <p>
                   <code>cd app && npm start</code> (or open the packaged
-                  <code>.app</code>). It starts your login shell in a real PTY, so
+                  <code>.app</code>). It starts your login shell in a PTY, so
                   vim, htop, and full-screen TUIs work normally.
                 </p>
               </div>
