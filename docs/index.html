@@ -106,11 +106,74 @@
         margin-bottom: 22px;
       }
 
-      .brand img {
+      /* Invisible slot — real mark is the floating twin that morphs on scroll */
+      .brand__slot {
         width: clamp(88px, 22vw, 128px);
         height: clamp(88px, 22vw, 128px);
-        border-radius: 24px;
-        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+        flex-shrink: 0;
+      }
+
+      .brand-float {
+        position: fixed;
+        z-index: 40;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        text-decoration: none;
+        pointer-events: auto;
+        will-change: left, top, width, height, border-radius, transform, opacity;
+        transform-origin: center center;
+      }
+
+      .brand-float img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        border-radius: inherit;
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+      }
+
+      .brand-float__label {
+        display: none;
+        font-family: "Instrument Serif", Georgia, serif;
+        font-size: 1.15rem;
+        letter-spacing: -0.02em;
+        color: var(--ink);
+        white-space: nowrap;
+        opacity: 0;
+      }
+
+      /* Mobile docked: thin bottom status bar */
+      .brand-float.is-mobile-bar {
+        justify-content: flex-start;
+        gap: 10px;
+        box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.45);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+      }
+
+      .brand-float.is-mobile-bar img {
+        width: 32px !important;
+        height: 32px !important;
+        border-radius: 9px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+        flex-shrink: 0;
+      }
+
+      .brand-float.is-mobile-bar .brand-float__label {
+        display: block;
+        opacity: 1;
+      }
+
+      body.has-mobile-bar {
+        padding-bottom: calc(48px + var(--safe-bottom));
       }
 
       .brand h1 {
@@ -443,10 +506,9 @@
           gap: 12px 18px;
         }
 
-        .brand img {
+        .brand__slot {
           width: 64px;
           height: 64px;
-          border-radius: 14px;
         }
 
         .brand h1 {
@@ -467,6 +529,10 @@
         .parallax__img {
           transform: none !important;
         }
+
+        .brand-float {
+          transition: none !important;
+        }
       }
     </style>
   </head>
@@ -483,18 +549,22 @@
       <div class="parallax__veil"></div>
     </div>
 
-    <div class="page">
+    <a class="brand-float" id="brandFloat" href="#top" aria-label="dogsh — back to top">
+      <img src="dogsh.png" width="128" height="128" alt="" />
+      <span class="brand-float__label">dogsh</span>
+    </a>
+
+    <div class="page" id="top">
       <div class="page__primary">
         <main>
           <header class="brand">
-            <img src="dogsh.png" width="128" height="128" alt="dogsh" />
+            <div class="brand__slot" id="brandSlot" aria-hidden="true"></div>
             <h1>dogsh</h1>
             <p>
-              A continuity terminal — one real shell session that follows you from a
-              native macOS window into Chrome, across tabs, and onto Edge Canary on
-              Android.
+              One real shell session across the macOS app, Chrome tabs, and
+              experimental Edge Canary on Android.
             </p>
-            <span class="status">public preview · protocol v10</span>
+            <span class="status">A UX Experiment by @maceip</span>
           </header>
 
           <nav class="nav" aria-label="Sections">
@@ -502,7 +572,7 @@
             <a href="#use">Use it</a>
             <a href="#architecture">Architecture</a>
             <a href="#state">Current state</a>
-            <a href="#possibility">Possibility</a>
+            <a href="#possibility">Next</a>
           </nav>
 
           <figure class="demo" id="demo">
@@ -510,8 +580,7 @@
               <source src="demo.mp4" type="video/mp4" />
             </video>
             <figcaption>
-              Continuity demo — native dogsh → Chrome for Testing → Edge Canary on
-              the emulator. Silent H.264.
+              macOS app → Chrome for Testing → Edge Canary on Android. Silent H.264.
             </figcaption>
           </figure>
         </main>
@@ -522,26 +591,25 @@
           <section id="use">
             <h2>How you can use it</h2>
             <p class="lede">
-              Run a real shell in the native app. When you focus Chrome, the same
-              session appears as an overlay on the page. Switch tabs — it follows.
-              On a phone with Edge Canary + the sideloaded extension, it can follow
-              there too.
+              Start a shell in the macOS app. Focus Chrome and it appears in the
+              active tab; switch tabs and it moves with you. The Android build uses
+              the same extension in Edge Canary.
             </p>
             <div class="grid cols-3">
               <div class="tile">
                 <h3>1 · Native</h3>
                 <p>
                   <code>cd app && npm start</code> (or open the packaged
-                  <code>.app</code>). Your login shell is a real pty — vim, htop,
-                  Cursor <code>agent</code>, anything.
+                  <code>.app</code>). It starts your login shell in a real PTY, so
+                  vim, htop, and full-screen TUIs work normally.
                 </p>
               </div>
               <div class="tile">
                 <h3>2 · Chrome</h3>
                 <p>
                   Build the extension (<code>cd extension && npm run build</code>),
-                  Load unpacked → <code>extension/dist</code>. Cmd-tab to any normal
-                  site; the terminal flies in.
+                  then load <code>extension/dist</code> as an unpacked extension.
+                  The active tab gets the terminal when Chrome takes focus.
                 </p>
               </div>
               <div class="tile">
@@ -549,7 +617,7 @@
                 <p>
                   Pack <code>dogsh.crx</code>, sideload into Edge <strong>Canary</strong>,
                   <code>adb reverse</code> the daemon port, set options to
-                  <code>ws://localhost:&lt;port&gt;</code>, open a page — overlay follows.
+                  <code>ws://localhost:&lt;port&gt;</code>, and open a page.
                 </p>
               </div>
             </div>
@@ -565,53 +633,53 @@ cd extension && npm run pack   # → build/dogsh.crx</pre>
           <section id="architecture">
             <h2>Architecture</h2>
             <p class="lede">
-              The shell lives in a <strong>Session Host</strong> (daemon). Everything
-              you see is a thin <strong>face</strong>. Ownership is a lease on who may
-              type and resize — not where the process lives.
+              The daemon owns the PTY and terminal state. Apps and tabs connect over
+              WebSocket; one central lease controls input and resize.
             </p>
             <pre class="arch">
-<span class="hi">Faces</span>  native Electron · Chrome / Edge tabs · optional network PWA
-   │  WebSocket  (default ws://127.0.0.1:47703)
+<span class="hi">Clients</span>       macOS app · Chrome / Edge tabs · optional network PWA
+   │          hello · visibility / focus · owner-only input
    ▼
-<span class="hi">Face gateway</span>     hello / signal / input / caps
+<span class="hi">Gateway</span>       WebSocket · 16 ms signal coalescing · slow-client resync
    ▼
-<span class="hi">Lease arbiter</span>    derives sole | mute | monitor from {visible, focused}
+<span class="hi">Lease engine</span>  engagement order → sole | mute | monitor
    ▼
-<span class="hi">Session mux</span>      active session, snapshots, grid broadcast
+<span class="hi">Session mux</span>   active session · export / fence / import · generation
    ▼
-<span class="hi">Shell backend</span>    node-pty (live) · guest backend (checkpoint path)
+<span class="hi">PTY + xterm</span>   live process · snapshots · backpressure
    ▼
-<span class="hi">Persist</span>          scrollback / grid / titles under ~/.dogsh/state
+<span class="hi">State</span>         atomic files under ~/.dogsh/state
 </pre>
             <div class="grid cols-2" style="margin-top: 18px">
               <div class="tile">
-                <h3>Derived ownership</h3>
+                <h3>No echo storms</h3>
                 <p>
-                  Faces report raw focus/visibility. The daemon picks the owner and
-                  broadcasts <code>owner-state</code> + <code>leaseRole</code>. No
-                  client “claims” the terminal.
+                  Focus and visibility are level reports, not claims. Duplicates are
+                  dropped, bursts coalesced, and only the owner’s input reaches the
+                  PTY.
                 </p>
               </div>
               <div class="tile">
-                <h3>Handoff = reveal</h3>
+                <h3>Fenced handoff</h3>
                 <p>
-                  Faces stay attached while hidden. Switching surfaces only reveals
-                  an already-warm renderer — that’s why the motion feels immediate.
+                  Local switches update the lease. Host transfers export a snapshot,
+                  fence the old generation, import on the new host, then reconnect
+                  clients.
                 </p>
               </div>
               <div class="tile">
-                <h3>Owner drives size</h3>
+                <h3>Bounded output</h3>
                 <p>
-                  The owning face reports fitted cols/rows; the daemon resizes the
-                  pty and every face follows the grid (critical for TUIs like
-                  <code>agent</code>).
+                  The PTY mirror pauses at its high-water mark. Slow clients stop
+                  receiving deltas, get a fresh snapshot when they recover, and are
+                  dropped if stuck.
                 </p>
               </div>
               <div class="tile">
-                <h3>Remoteness</h3>
+                <h3>Serialized state</h3>
                 <p>
-                  Loopback vs remote is observed from the socket address. Tokens
-                  gate non-loopback hellos. No ADB-specific hacks in the host.
+                  Headless xterm snapshots include scrollback, colors, cursor,
+                  alternate screen, and grid; atomic saves survive daemon restarts.
                 </p>
               </div>
             </div>
@@ -620,58 +688,46 @@ cd extension && npm run pack   # → build/dogsh.crx</pre>
           <section id="state">
             <h2>Current state</h2>
             <p class="lede">
-              Public repo with a working macOS native face, Chrome MV3 overlay, and
-              an experimental Edge Canary Android path. CI packages a debug
+              The macOS app and Chrome MV3 overlay work now; the Edge Canary Android
+              path is experimental. CI packages a debug
               <code>.app</code>, extension <code>dist/</code>, and <code>.crx</code>.
             </p>
             <ul class="plain">
               <li>
                 <strong>Works today</strong> — native ↔ Chrome follow, multi-tab
                 overlay, dynamic grid, flood control, scrollback persistence,
-                Cursor Agent / TUI handoff on desktop.
+                and desktop TUI handoff.
               </li>
               <li>
                 <strong>Experimental</strong> — Edge Canary on Android sideload;
-                phone sheet resize / maximize; USB <code>adb reverse</code> to a
-                loopback daemon.
+                phone resize; USB <code>adb reverse</code> to the daemon.
               </li>
               <li>
                 <strong>CI</strong> — GitHub Actions on macOS 14 builds the debug app
-                + Chrome extension + Canary crx artifacts.
+                and both extension artifacts.
               </li>
               <li>
                 <strong>Not yet</strong> — migrating a live Mac pty across machines
-                (hot-potato moves authority + scrollback; process continuity needs
-                the guest/webshell backend).
+                (the handoff moves authority and terminal state; process continuity
+                needs the guest backend).
               </li>
             </ul>
           </section>
 
           <section id="possibility">
-            <h2>Possibility</h2>
+            <h2>What’s next</h2>
             <p class="lede">
-              The north star is a terminal that stays with you the way a phone call
-              stays with you — desk, browser, pocket — without pasting scrollback or
-              SSHing into a second brain.
+              The same-machine handoff works. The next problems are finding the
+              current host and moving a live process between hosts.
             </p>
             <ul class="plain">
               <li>
-                <strong>Same machine continuity</strong> is the product now: one pty,
-                many faces, lease-based focus.
+                <strong>First</strong> — let phone and remote clients discover the
+                current host instead of keeping a stale endpoint.
               </li>
               <li>
-                <strong>Cross-device presence</strong> is partially here via network
-                faces + phone extension; tightening discovery (one port / rendezvous)
-                so faces can’t drift onto stale endpoints.
-              </li>
-              <li>
-                <strong>Cross-machine process continuity</strong> is the hard sequel:
-                checkpointable guest shells so a handoff doesn’t restart the world.
-              </li>
-              <li>
-                <strong>You can use it</strong> as a daily driver for agentic CLI
-                work that must survive cmd-tab, tab switches, and a glance at the
-                phone — as long as you stay on the supported surface set above.
+                <strong>Then</strong> — use checkpointable guest shells to move the
+                running process, not just authority and terminal state.
               </li>
             </ul>
           </section>
@@ -688,21 +744,135 @@ cd extension && npm run pack   # → build/dogsh.crx</pre>
 
     <script>
       (function () {
-        var img = document.getElementById("parallaxImg");
-        if (!img) return;
-        var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-        if (reduce) return;
+        var parallax = document.getElementById("parallaxImg");
+        var slot = document.getElementById("brandSlot");
+        var floatEl = document.getElementById("brandFloat");
+        if (!slot || !floatEl) return;
 
+        var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        var mobileMq = window.matchMedia("(max-width: 640px)");
         var ticking = false;
+
+        function easeInOut(t) {
+          return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        }
+
+        function lerp(a, b, t) {
+          return a + (b - a) * t;
+        }
+
+        function safeInset(side) {
+          // Resolve env(safe-area-inset-*) via a live style (custom props stay unevaluated).
+          var probe = safeInset._el;
+          if (!probe) {
+            probe = document.createElement("div");
+            probe.style.cssText =
+              "position:fixed;visibility:hidden;pointer-events:none;" +
+              "top:var(--safe-top);right:var(--safe-right);" +
+              "bottom:var(--safe-bottom);left:var(--safe-left);";
+            document.body.appendChild(probe);
+            safeInset._el = probe;
+          }
+          var cs = getComputedStyle(probe);
+          return parseFloat(cs[side]) || 0;
+        }
+
         function update() {
           ticking = false;
           var doc = document.documentElement;
-          var max = Math.max(1, doc.scrollHeight - window.innerHeight);
-          var t = Math.min(1, Math.max(0, window.scrollY / max));
-          // Content scrolls normally; backdrop zooms into the cartoon (1 → ~1.35)
-          var scale = 1 + t * 0.35;
-          var y = t * -4; // slight lift toward the controller
-          img.style.transform = "translate3d(0," + y + "%,0) scale(" + scale + ")";
+          var maxScroll = Math.max(1, doc.scrollHeight - window.innerHeight);
+          var pageT = Math.min(1, Math.max(0, window.scrollY / maxScroll));
+
+          if (parallax && !reduce) {
+            var scale = 1 + pageT * 0.35;
+            var y = pageT * -3;
+            parallax.style.transform = "translate3d(0," + y + "%,0) scale(" + scale + ")";
+          }
+
+          // Brand morph completes over the first stretch of scroll
+          var morphRange = Math.min(440, window.innerHeight * 0.6);
+          var raw = Math.min(1, Math.max(0, window.scrollY / morphRange));
+          var t = reduce ? (raw > 0.45 ? 1 : 0) : easeInOut(raw);
+          var mobile = mobileMq.matches;
+          var rect = slot.getBoundingClientRect();
+          var homeW = rect.width;
+          var homeH = rect.height;
+          var homeL = rect.left;
+          var homeT = rect.top;
+          var insetL = safeInset("left");
+          var insetT = safeInset("top");
+          var insetB = safeInset("bottom");
+
+          if (mobile) {
+            var barH = 48 + insetB;
+            var bar = t >= 0.98;
+            // Travel: shrink + drop toward bottom, then expand into status bar
+            var travel = Math.min(1, t / 0.72);
+            var expand = t <= 0.72 ? 0 : (t - 0.72) / 0.28;
+            var iconW = lerp(homeW, 32, travel);
+            var iconH = lerp(homeH, 32, travel);
+            var midW = lerp(iconW, window.innerWidth, expand);
+            var midH = lerp(iconH, barH, expand);
+            var centerL = (window.innerWidth - iconW) / 2;
+            var midL = expand > 0
+              ? lerp(centerL, 0, expand)
+              : lerp(homeL, centerL, travel);
+            var parkT = window.innerHeight - barH - 6;
+            var midT = expand > 0
+              ? lerp(parkT, window.innerHeight - barH, expand)
+              : lerp(homeT, parkT, travel);
+            // Fade mid-flight, then pop solid on the bar
+            var fade = 1;
+            if (travel > 0.08 && expand < 0.35) {
+              fade = lerp(1, 0.25, Math.min(1, (travel - 0.08) / 0.55));
+            } else if (expand >= 0.35) {
+              fade = lerp(0.25, 1, Math.min(1, (expand - 0.35) / 0.65));
+            }
+
+            if (bar) {
+              floatEl.classList.add("is-mobile-bar");
+              document.body.classList.add("has-mobile-bar");
+            } else {
+              floatEl.classList.remove("is-mobile-bar");
+              document.body.classList.remove("has-mobile-bar");
+            }
+
+            floatEl.style.left = midL + "px";
+            floatEl.style.top = midT + "px";
+            floatEl.style.width = midW + "px";
+            floatEl.style.height = midH + "px";
+            floatEl.style.borderRadius = expand > 0.5 ? "0px" : lerp(24, 10, travel) + "px";
+            floatEl.style.opacity = String(fade);
+            floatEl.style.transform = expand > 0.6 ? "none" : "scale(" + lerp(1, 0.9, travel) + ")";
+            floatEl.style.padding = expand > 0.4 ? "0 16px " + insetB + "px" : "0";
+            floatEl.style.background =
+              expand > 0.2 ? "rgba(5, 6, 7," + lerp(0, 0.92, expand) + ")" : "transparent";
+            floatEl.style.borderTop =
+              expand > 0.45 ? "1px solid rgba(232, 228, 218, 0.14)" : "0";
+            floatEl.style.justifyContent = expand > 0.5 ? "flex-start" : "center";
+            floatEl.style.gap = expand > 0.5 ? "10px" : "0";
+          } else {
+            floatEl.classList.remove("is-mobile-bar");
+            document.body.classList.remove("has-mobile-bar");
+            // Desktop: shrink 50%, dock left, stick to viewport while scrolling
+            var dockW = homeW * 0.5;
+            var dockH = homeH * 0.5;
+            var dockL = 16 + insetL;
+            var dockT = 20 + insetT;
+            floatEl.style.left = lerp(homeL, dockL, t) + "px";
+            floatEl.style.top = lerp(homeT, dockT, t) + "px";
+            floatEl.style.width = lerp(homeW, dockW, t) + "px";
+            floatEl.style.height = lerp(homeH, dockH, t) + "px";
+            floatEl.style.borderRadius = lerp(24, 14, t) + "px";
+            floatEl.style.opacity = "1";
+            // One full counterclockwise spin while warping left; upright when docked/restored
+            floatEl.style.transform = "rotate(" + (-360 * t) + "deg)";
+            floatEl.style.padding = "0";
+            floatEl.style.background = "transparent";
+            floatEl.style.borderTop = "0";
+            floatEl.style.justifyContent = "center";
+            floatEl.style.gap = "0";
+          }
         }
 
         function onScroll() {
@@ -714,6 +884,8 @@ cd extension && npm run pack   # → build/dogsh.crx</pre>
 
         window.addEventListener("scroll", onScroll, { passive: true });
         window.addEventListener("resize", onScroll, { passive: true });
+        if (mobileMq.addEventListener) mobileMq.addEventListener("change", onScroll);
+        else mobileMq.addListener(onScroll);
         update();
       })();
     </script>
